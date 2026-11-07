@@ -1,0 +1,181 @@
+{
+  "ingesta": {
+    "registros_estudiantes_periodo": 27975,
+    "registros_target": 0,
+    "num_sedes_cubiertas": 5,
+    "num_programas_cubiertos": 10,
+    "num_periodos_cubiertos": 10,
+    "tablas_relacionadas_disponibles": [
+      "bienestar_acompanamiento.parquet",
+      "estudiante_asignatura_periodo.parquet",
+      "financiera_estudiante_evento.parquet",
+      "solicitudes_estudiantiles.parquet"
+    ],
+    "dataset_version": "7001ef01745ebdef564dcee23f986fb4327019c7e6fa6d088d44d3c3a1875c6c"
+  },
+  "calidad": {
+    "tasa_cumplimiento_calidad": 77.78,
+    "reglas_auditadas": 13,
+    "reglas_evaluables": 9,
+    "reglas_no_evaluables": 4,
+    "fuga_detectada": true,
+    "faltantes_por_columna": {
+      "promedio_semestre_anterior": 6000,
+      "avance_plan_pct": 4,
+      "tipo_beca": 22581,
+      "tipo_apoyo_bienestar": 18006
+    },
+    "target": null,
+    "dataset_version": "7001ef01745ebdef564dcee23f986fb4327019c7e6fa6d088d44d3c3a1875c6c",
+    "detalle_reglas": [
+      {
+        "regla": "PK estudiante-periodo",
+        "severidad": "crítica",
+        "cumple": true,
+        "estado": "cumple",
+        "detalle": "tabla principal: 0 llaves nulas, 0 duplicadas; target no requerido"
+      },
+      {
+        "regla": "Integridad de sedes",
+        "severidad": "crítica",
+        "cumple": true,
+        "estado": "cumple",
+        "detalle": "0 valores vacíos; sedes faltantes del catálogo: []"
+      },
+      {
+        "regla": "Consistencia temporal",
+        "severidad": "alta",
+        "cumple": true,
+        "estado": "cumple",
+        "detalle": "0 cohortes posteriores al periodo observado"
+      },
+      {
+        "regla": "Rangos académicos y porcentajes",
+        "severidad": "alta",
+        "cumple": false,
+        "estado": "no_cumple",
+        "detalle": "valores fuera de rango marcados como faltantes: {'avance_plan_pct': 4}"
+      },
+      {
+        "regla": "Reglas contables básicas",
+        "severidad": "media",
+        "cumple": true,
+        "estado": "cumple",
+        "detalle": "0 filas exceden créditos inscritos (revisar homologaciones)"
+      },
+      {
+        "regla": "Catálogos normalizados",
+        "severidad": "alta",
+        "cumple": null,
+        "estado": "no_evaluable",
+        "detalle": "programa/sede verificables; faltan catálogos maestros para: ['modalidad', 'jornada', 'genero', 'tipo_financiacion']"
+      },
+      {
+        "regla": "Fecha de corte y ausencia de fuga",
+        "severidad": "crítica",
+        "cumple": null,
+        "estado": "no_evaluable",
+        "detalle": "columnas post-evento excluidas preventivamente: ['probabilidad_riesgo_simulada', 'nivel_riesgo_simulado']; no hay metadatos de disponibilidad temporal por predictor"
+      },
+      {
+        "regla": "Faltantes explícitos",
+        "severidad": "alta",
+        "cumple": false,
+        "estado": "no_cumple",
+        "detalle": "faltantes sin codificación de motivo: ['promedio_semestre_anterior', 'avance_plan_pct', 'tipo_beca', 'tipo_apoyo_bienestar']"
+      },
+      {
+        "regla": "Cobertura histórica de cinco años",
+        "severidad": "alta",
+        "cumple": true,
+        "estado": "cumple",
+        "detalle": "5 años observados; periodos faltantes: []"
+      },
+      {
+        "regla": "Tablas anexas relacionadas",
+        "severidad": "alta",
+        "cumple": true,
+        "estado": "cumple",
+        "detalle": "tablas verificadas: 4; problemas: ninguno"
+      },
+      {
+        "regla": "Sesgo y equidad",
+        "severidad": "alta",
+        "cumple": null,
+        "estado": "no_evaluable",
+        "detalle": "Requiere predicciones y etiquetas; se calcula durante la evaluación del modelo"
+      },
+      {
+        "regla": "Desbalance de clases",
+        "severidad": "alta",
+        "cumple": null,
+        "estado": "no_evaluable",
+        "detalle": "No hay target; verificación solo aplica al entrenamiento"
+      },
+      {
+        "regla": "Versionado del dataset",
+        "severidad": "media",
+        "cumple": true,
+        "estado": "cumple",
+        "detalle": "snapshot: 7001ef01745ebdef564dcee23f986fb4327019c7e6fa6d088d44d3c3a1875c6c"
+      }
+    ]
+  },
+  "caracteristicas": {
+    "num_variables_generadas": 59,
+    "variables_numericas": 52,
+    "variables_categoricas": 7
+  },
+  "prediccion": {
+    "total_evaluados": 27975,
+    "alertas_tempranas_activas": 17401,
+    "tasa_alertas": 62.2,
+    "distribucion_riesgo": {
+      "Medio": 16515,
+      "Alto": 7215,
+      "Bajo": 3737,
+      "Crítico": 508
+    }
+  },
+  "explicabilidad": {
+    "estudiantes_con_plan_intervencion": 27975,
+    "intervenciones_urgentes": 7723,
+    "tipo_explicacion": "heuristica_de_reglas_de_negocio",
+    "distribucion_intervenciones": {
+      "Contacto preventivo del consejero estudiantil": 16515,
+      "Apoyo socioeconómico — Acuerdo de financiación o gestión de beca": 3862,
+      "Seguimiento preventivo regular": 3737,
+      "Tutoría de permanencia — Acompañamiento tutorial urgente": 1795,
+      "Vinculación preventiva al programa 'Te quiero en la U'": 1014,
+      "Apoyo psicoeducativo — Métodos de estudio y refuerzo en materias críticas": 800,
+      "Atención integral — Apoyo de bienestar universitario": 206,
+      "Fase de acogida — Contacto para reconexión con plataforma virtual": 46
+    }
+  },
+  "monitoreo": {
+    "tasa_global_riesgo_alto": 27.61,
+    "riesgo_por_sede": {
+      "CAL": 24.61,
+      "MED": 24.92,
+      "NEI": 25.05,
+      "POP": 25.88,
+      "VIR": 34.47
+    },
+    "riesgo_por_programa": {
+      "ADE": 32.39,
+      "AFD": 26.36,
+      "ASV": 45.32,
+      "CON": 32.02,
+      "FIS": 21.95,
+      "FON": 22.08,
+      "NUT": 21.11,
+      "PSI": 25.01,
+      "SWE": 36.7,
+      "TOP": 15.12
+    },
+    "deriva_evaluable": false,
+    "equidad_evaluable": false,
+    "equidad_motivo": "Se requieren etiquetas observadas y métricas por grupo.",
+    "estado_salud_modelo": "Sin línea base de deriva; requiere monitoreo temporal"
+  }
+}

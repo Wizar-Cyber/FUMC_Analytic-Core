@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "functionAppName": {
+      "value": "<unique-function-app-name>"
+    },
+    "entraTenantId": {
+      "value": "92d08b37-eb78-4694-96ba-64191bdb06c8"
+    },
+    "entraClientId": {
+      "value": "<existing-entra-app-client-id>"
+    },
+    "reviewerPrincipalIds": {
+      "value": "<entra-user-object-id>"
+    }
+  }
+}

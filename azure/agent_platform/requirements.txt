@@ -1,0 +1,8 @@
+azure-functions>=1.21,<2
+azure-functions-durable>=1.2,<2
+azure-identity>=1.17,<2
+azure-data-tables>=12.5,<13
+azure-search-documents>=11.6,<12
+azure-servicebus>=7.13,<8
+azure-storage-blob>=12.22,<13
+semantic-kernel>=1.30,<2

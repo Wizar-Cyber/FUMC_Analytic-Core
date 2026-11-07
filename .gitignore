@@ -1,0 +1,24 @@
+
+# project hygiene
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pkl
+*.parquet
+*.csv
+*.xlsx
+*.docx
+*.pptx
+*.zip
+.vscode/
+Documentos/
+mlruns/
+powerbi/
+articulo_trabajo_grado.md
+articulo_trabajo_grado.docx
+generate_docx.py
+outputs/poc_20261105_0404/
+local.settings.json
+*.log
+

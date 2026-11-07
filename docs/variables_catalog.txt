@@ -1,0 +1,389 @@
+Identificaci¾n y temporalidad|id_estudiante_anon|Texto|No|Nulo|V1|Alta
+Identificaci¾n y temporalidad|cohorte_ingreso|Texto|SÝ|Nulo|V1|Alta
+Identificaci¾n y temporalidad|anio|Entero|SÝ|Nulo|V1|Alta
+Identificaci¾n y temporalidad|semestre|Texto|SÝ|Nulo|V1|Alta
+Identificaci¾n y temporalidad|periodo_id|Texto|SÝ|Nulo|V1|Alta
+Identificaci¾n y temporalidad|programa|Texto|SÝ|Nulo|V1|Alta
+Identificaci¾n y temporalidad|codigo_programa|Texto|Opcional|Nulo|V1|Media
+Identificaci¾n y temporalidad|jornada|Texto|SÝ|Nulo|V1|Media
+Identificaci¾n y temporalidad|modalidad|Texto|SÝ|Nulo|V1|Alta
+Identificaci¾n y temporalidad|sede|Texto|SÝ|Nulo|V1|Media
+Identificaci¾n y temporalidad|nivel_formacion|Texto|SÝ|Nulo|V2|Media
+Identificaci¾n y temporalidad|semestre_plan|Entero|SÝ|Nulo|V2|Media
+Identificaci¾n y temporalidad|fecha_nacimiento|Fecha|No|Bajo|V2|Media
+Identificaci¾n y temporalidad|fecha_ingreso_institucion|Fecha|SÝ|Bajo|V2|Alta
+Identificaci¾n y temporalidad|fecha_primer_matricula|Fecha|SÝ|Bajo|V2|Alta
+Identificaci¾n y temporalidad|fecha_ultima_matricula|Fecha|No|Bajo|V2|Media
+Identificaci¾n y temporalidad|estado_matricula_periodo|Texto|SÝ|Bajo|V2|Alta
+Identificaci¾n y temporalidad|tipo_estudiante|Texto|SÝ|Bajo|V2|Alta
+Identificaci¾n y temporalidad|tipo_ingreso|Texto|SÝ|Bajo|V2|Alta
+Identificaci¾n y temporalidad|origen_ingreso|Texto|SÝ|Bajo|V2|Media
+Identificaci¾n y temporalidad|es_reingreso|Binario|SÝ|Bajo|V2|Alta
+Identificaci¾n y temporalidad|es_transferencia|Binario|SÝ|Bajo|V2|Media
+Identificaci¾n y temporalidad|es_homologacion|Binario|SÝ|Bajo|V2|Media
+Identificaci¾n y temporalidad|plan_estudios_id|Texto|SÝ|Bajo|V2|Alta
+Identificaci¾n y temporalidad|version_plan_estudios|Texto|SÝ|Bajo|V2|Alta
+Identificaci¾n y temporalidad|facultad|Texto|SÝ|Bajo|V2|Media
+Identificaci¾n y temporalidad|escuela_o_unidad_academica|Texto|SÝ|Bajo|V2|Media
+Identificaci¾n y temporalidad|campus_o_centro|Texto|SÝ|Bajo|V2|Media
+Identificaci¾n y temporalidad|periodo_ordinal_estudiante|Entero|SÝ|Bajo|V2|Alta
+Identificaci¾n y temporalidad|antiguedad_institucional_periodos|Entero|SÝ|Bajo|V2|Alta
+Admisi¾n e ingreso|puntaje_admision|Decimal|SÝ|Bajo|V2|Alta
+Admisi¾n e ingreso|puntaje_global_prueba_ingreso|Decimal|SÝ|Bajo|V2|Alta
+Admisi¾n e ingreso|puntaje_lectura_critica|Decimal|SÝ|Bajo|V2|Media
+Admisi¾n e ingreso|puntaje_matematicas|Decimal|SÝ|Bajo|V2|Alta
+Admisi¾n e ingreso|puntaje_ingles|Decimal|SÝ|Bajo|V2|Media
+Admisi¾n e ingreso|puntaje_ciencias|Decimal|SÝ|Bajo|V2|Media
+Admisi¾n e ingreso|tipo_prueba_ingreso|Texto|SÝ|Bajo|V2|Media
+Admisi¾n e ingreso|puesto_admision|Entero|SÝ|Bajo|V3|Baja
+Admisi¾n e ingreso|fecha_admision|Fecha|SÝ|Bajo|V2|Media
+Admisi¾n e ingreso|estado_admision|Texto|SÝ|Bajo|V2|Media
+Admisi¾n e ingreso|canal_admision|Texto|SÝ|Bajo|V3|Baja
+Admisi¾n e ingreso|convocatoria_ingreso|Texto|SÝ|Bajo|V3|Baja
+Admisi¾n e ingreso|beneficiario_politica_acceso|Binario|SÝ|Bajo|V2|Media
+Admisi¾n e ingreso|origen_colegio|Texto|SÝ|Bajo|V2|Media
+Admisi¾n e ingreso|anio_graduacion_colegio|Entero|SÝ|Bajo|V2|Media
+Admisi¾n e ingreso|tiempo_entre_bachillerato_e_ingreso|Entero|SÝ|Bajo|V2|Media
+AcadÚmicas|promedio_acumulado|Decimal|SÝ|Bajo|V1|Alta
+AcadÚmicas|promedio_semestre|Decimal|SÝ|Bajo|V1|Alta
+AcadÚmicas|promedio_semestre_anterior|Decimal|SÝ|Nulo|V1|Alta
+AcadÚmicas|creditos_inscritos|Entero|SÝ|Nulo|V1|Alta
+AcadÚmicas|creditos_aprobados|Entero|SÝ|Bajo|V1|Alta
+AcadÚmicas|creditos_reprobados|Entero|SÝ|Bajo|V1|Alta
+AcadÚmicas|num_materias_inscritas|Entero|SÝ|Nulo|V2|Media
+AcadÚmicas|num_materias_perdidas|Entero|SÝ|Bajo|V1|Alta
+AcadÚmicas|num_materias_canceladas|Entero|SÝ|Bajo|V1|Alta
+AcadÚmicas|semestres_cursados|Entero|SÝ|Nulo|V1|Alta
+AcadÚmicas|avance_plan_pct|Decimal|SÝ|Nulo|V1|Alta
+AcadÚmicas|rezago_academico|Decimal|SÝ|Nulo|V1|Alta
+AcadÚmicas|historial_prueba_academica|Binario|SÝ|Nulo|V1|Alta
+AcadÚmicas|num_periodos_prueba_academica|Entero|SÝ|Nulo|V2|Media
+AcadÚmicas|repitencia_asignaturas|Entero|SÝ|Nulo|V1|Alta
+AcadÚmicas|cambios_programa_previos|Entero|SÝ|Nulo|V2|Media
+AcadÚmicas|retiro_materias_parcial|Entero|SÝ|Bajo|V2|Media
+AcadÚmicas|rendimiento_primer_corte|Decimal|SÝ|Nulo|V1|Alta
+AcadÚmicas|evaluaciones_no_presentadas|Entero|SÝ|Nulo|V1|Alta
+AcadÚmicas|porcentaje_asistencia|Decimal|SÝ|Nulo|V1|Alta
+AcadÚmicas|inasistencias_acumuladas|Entero|SÝ|Nulo|V2|Alta
+AcadÚmicas|cursos_en_riesgo|Entero|SÝ|Nulo|V2|Alta
+AcadÚmicas|creditos_homologados|Entero|SÝ|Bajo|V2|Media
+AcadÚmicas|creditos_cancelados|Entero|SÝ|Bajo|V2|Alta
+AcadÚmicas|creditos_pendientes_plan|Entero|SÝ|Bajo|V2|Alta
+AcadÚmicas|creditos_matriculables|Entero|SÝ|Bajo|V3|Media
+AcadÚmicas|carga_academica_esperada|Entero|SÝ|Bajo|V2|Alta
+AcadÚmicas|sobrecarga_academica|Decimal|SÝ|Bajo|V2|Media
+AcadÚmicas|subcarga_academica|Decimal|SÝ|Bajo|V2|Alta
+AcadÚmicas|num_asignaturas_habilitadas|Entero|SÝ|Bajo|V3|Media
+AcadÚmicas|num_asignaturas_validables|Entero|SÝ|Bajo|V3|Baja
+AcadÚmicas|num_asignaturas_repetidas_periodo|Entero|SÝ|Bajo|V2|Alta
+AcadÚmicas|num_asignaturas_basicas_perdidas|Entero|SÝ|Bajo|V2|Alta
+AcadÚmicas|num_asignaturas_disciplinarias_perdidas|Entero|SÝ|Bajo|V2|Alta
+AcadÚmicas|promedio_primer_parcial|Decimal|SÝ|Bajo|V2|Alta
+AcadÚmicas|promedio_segundo_parcial|Decimal|SÝ|Bajo|V2|Media
+AcadÚmicas|promedio_final_periodo|Decimal|SÝ|Bajo|V2|Alta
+AcadÚmicas|porcentaje_creditos_aprobados_periodo|Decimal|SÝ|Bajo|V2|Alta
+AcadÚmicas|porcentaje_creditos_cancelados_periodo|Decimal|SÝ|Bajo|V2|Media
+AcadÚmicas|indice_rendimiento_academico|Decimal|SÝ|Bajo|V3|Media
+AcadÚmicas|posicion_relativa_programa|Decimal|SÝ|Bajo|V3|Baja
+AcadÚmicas|riesgo_academico_periodo|Texto|SÝ|Bajo|V3|Media
+AcadÚmicas|alerta_academica_periodo|Binario|SÝ|Bajo|V2|Alta
+AcadÚmicas|prueba_academica_actual|Binario|SÝ|Bajo|V2|Alta
+AcadÚmicas|condicion_academica_cierre|Texto|No|Bajo|V2|Media
+AcadÚmicas|tiempo_sin_cursar_asignaturas|Entero|SÝ|Bajo|V3|Media
+AcadÚmicas|interrupciones_academicas_previas|Entero|SÝ|Bajo|V2|Alta
+AcadÚmicas hist¾ricas / longitudinales|promedio_acumulado_max|Decimal|SÝ|Bajo|V3|Baja
+AcadÚmicas hist¾ricas / longitudinales|promedio_acumulado_min|Decimal|SÝ|Bajo|V3|Baja
+AcadÚmicas hist¾ricas / longitudinales|numero_periodos_con_perdidas|Entero|SÝ|Bajo|V2|Alta
+AcadÚmicas hist¾ricas / longitudinales|numero_periodos_sin_matricula|Entero|SÝ|Bajo|V2|Alta
+AcadÚmicas hist¾ricas / longitudinales|numero_periodos_con_cancelaciones|Entero|SÝ|Bajo|V2|Media
+AcadÚmicas hist¾ricas / longitudinales|numero_periodos_con_mora|Entero|SÝ|Bajo|V2|Alta
+AcadÚmicas hist¾ricas / longitudinales|numero_periodos_con_prueba_academica|Entero|SÝ|Bajo|V2|Alta
+AcadÚmicas hist¾ricas / longitudinales|numero_total_asignaturas_reprobadas|Entero|SÝ|Bajo|V2|Alta
+AcadÚmicas hist¾ricas / longitudinales|numero_total_asignaturas_canceladas|Entero|SÝ|Bajo|V2|Media
+AcadÚmicas hist¾ricas / longitudinales|numero_total_creditos_aprobados|Entero|SÝ|Bajo|V2|Alta
+AcadÚmicas hist¾ricas / longitudinales|numero_total_creditos_reprobados|Entero|SÝ|Bajo|V2|Alta
+AcadÚmicas hist¾ricas / longitudinales|numero_total_creditos_cancelados|Entero|SÝ|Bajo|V2|Media
+AcadÚmicas hist¾ricas / longitudinales|tendencia_promedio_3_periodos|Decimal|SÝ|Bajo|V3|Media
+AcadÚmicas hist¾ricas / longitudinales|variacion_promedio_vs_anterior|Decimal|SÝ|Bajo|V2|Alta
+AcadÚmicas hist¾ricas / longitudinales|variacion_creditos_inscritos_vs_anterior|Decimal|SÝ|Bajo|V2|Media
+AcadÚmicas hist¾ricas / longitudinales|variacion_asistencia_vs_anterior|Decimal|SÝ|Bajo|V3|Media
+Detalle por asignatura / curso|codigo_asignatura|Texto|SÝ|Bajo|V3|Media
+Detalle por asignatura / curso|nombre_asignatura|Texto|No|Bajo|V3|Baja
+Detalle por asignatura / curso|tipo_asignatura|Texto|SÝ|Bajo|V3|Media
+Detalle por asignatura / curso|area_asignatura|Texto|SÝ|Bajo|V3|Media
+Detalle por asignatura / curso|creditos_asignatura|Entero|SÝ|Bajo|V3|Media
+Detalle por asignatura / curso|grupo_asignatura|Texto|No|Bajo|V3|Baja
+Detalle por asignatura / curso|modalidad_asignatura|Texto|SÝ|Bajo|V3|Media
+Detalle por asignatura / curso|docente_id_anon|Texto|No|Bajo|V3|Baja
+Detalle por asignatura / curso|nota_primer_corte_asignatura|Decimal|SÝ|Bajo|V3|Alta
+Detalle por asignatura / curso|nota_segundo_corte_asignatura|Decimal|SÝ|Bajo|V3|Media
+Detalle por asignatura / curso|nota_final_asignatura|Decimal|SÝ|Bajo|V3|Alta
+Detalle por asignatura / curso|resultado_asignatura|Texto|No|Bajo|V3|Media
+Detalle por asignatura / curso|estado_asignatura|Texto|No|Bajo|V3|Baja
+Detalle por asignatura / curso|veces_cursada|Entero|SÝ|Bajo|V3|Media
+Detalle por asignatura / curso|es_repitencia_asignatura|Binario|SÝ|Bajo|V3|Media
+Detalle por asignatura / curso|inasistencias_asignatura|Entero|SÝ|Bajo|V3|Media
+Detalle por asignatura / curso|porcentaje_asistencia_asignatura|Decimal|SÝ|Bajo|V3|Media
+Detalle por asignatura / curso|retiro_asignatura|Binario|SÝ|Bajo|V3|Media
+Detalle por asignatura / curso|habilito_asignatura|Binario|SÝ|Bajo|V3|Baja
+Detalle por asignatura / curso|aprobo_habilitacion|Binario|No|Bajo|V3|Baja
+Detalle por asignatura / curso|fecha_cancelacion_asignatura|Fecha|No|Bajo|V3|Baja
+Sociodemogrßficas y contexto|estrato|Entero|SÝ|Nulo|V1|Alta
+Sociodemogrßficas y contexto|genero|Texto|SÝ, con cautela|Nulo|V1|Media
+Sociodemogrßficas y contexto|edad_ingreso|Entero|SÝ|Nulo|V1|Alta
+Sociodemogrßficas y contexto|tipo_colegio|Texto|SÝ|Nulo|V1|Media
+Sociodemogrßficas y contexto|ciudad_origen|Texto|SÝ, transformada|Nulo|V1|Media
+Sociodemogrßficas y contexto|departamento_origen|Texto|SÝ|Nulo|V2|Baja
+Sociodemogrßficas y contexto|nivel_educativo_padres|Texto|SÝ|Nulo|V1|Media
+Sociodemogrßficas y contexto|primera_generacion_universitaria|Binario|SÝ|Nulo|V2|Media
+Sociodemogrßficas y contexto|tipo_financiacion|Texto|SÝ|Nulo|V1|Alta
+Sociodemogrßficas y contexto|trabaja_actualmente|Binario|SÝ|Nulo|V2|Media
+Sociodemogrßficas y contexto|personas_a_cargo|Entero|SÝ|Nulo|V2|Baja
+Sociodemogrßficas y contexto|estado_civil|Texto|Opcional|Nulo|V2|Baja
+Sociodemogrßficas y contexto|edad_actual|Entero|Opcional|Nulo|V2|Baja
+Sociodemogrßficas y contexto|municipio_residencia|Texto|SÝ|Bajo|V2|Media
+Sociodemogrßficas y contexto|departamento_residencia|Texto|SÝ|Bajo|V2|Media
+Sociodemogrßficas y contexto|zona_residencia|Texto|SÝ|Bajo|V2|Media
+Sociodemogrßficas y contexto|distancia_sede_residencia|Decimal|SÝ|Bajo|V3|Baja
+Sociodemogrßficas y contexto|tiempo_desplazamiento_estimado|Decimal|SÝ|Bajo|V3|Baja
+Sociodemogrßficas y contexto|tipo_vivienda|Texto|SÝ|Bajo|V3|Baja
+Sociodemogrßficas y contexto|convive_con_familia|Binario|SÝ|Bajo|V3|Baja
+Sociodemogrßficas y contexto|acceso_internet_hogar|Binario|SÝ|Bajo|V2|Media
+Sociodemogrßficas y contexto|dispositivo_principal_estudio|Texto|SÝ|Bajo|V3|Baja
+Sociodemogrßficas y contexto|dependencia_economica|Texto|SÝ|Bajo|V2|Media
+Sociodemogrßficas y contexto|ingreso_familiar_rango|Texto|SÝ|Bajo|V2|Media
+Sociodemogrßficas y contexto|numero_personas_hogar|Entero|SÝ|Bajo|V3|Baja
+Financieras y administrativas|estado_cartera|Texto|SÝ|Nulo|V1|Alta
+Financieras y administrativas|dias_mora|Entero|SÝ|Nulo|V1|Alta
+Financieras y administrativas|pago_matricula_oportuno|Binario|SÝ|Nulo|V1|Alta
+Financieras y administrativas|valor_matricula|Decimal|SÝ|Nulo|V2|Media
+Financieras y administrativas|porcentaje_descuento|Decimal|SÝ|Nulo|V2|Media
+Financieras y administrativas|perdida_beca|Binario|SÝ|Bajo|V2|Alta
+Financieras y administrativas|renovacion_beca|Binario|SÝ|Bajo|V2|Media
+Financieras y administrativas|aplazamientos_previos|Entero|SÝ|Nulo|V1|Alta
+Financieras y administrativas|reingresos_previos|Entero|SÝ|Nulo|V1|Alta
+Financieras y administrativas|solicitud_apoyo_economico|Binario|SÝ|Bajo|V2|Media
+Financieras y administrativas|medio_pago_matricula|Texto|Opcional|Nulo|V2|Baja
+Financieras y administrativas|fraccionamiento_pago|Binario|SÝ|Nulo|V2|Media
+Financieras y administrativas|saldo_cartera|Decimal|SÝ|Bajo|V2|Alta
+Financieras y administrativas|valor_pagado_periodo|Decimal|SÝ|Bajo|V2|Alta
+Financieras y administrativas|valor_financiado_periodo|Decimal|SÝ|Bajo|V2|Alta
+Financieras y administrativas|porcentaje_financiado|Decimal|SÝ|Bajo|V2|Media
+Financieras y administrativas|deuda_acumulada|Decimal|SÝ|Bajo|V2|Alta
+Financieras y administrativas|numero_cuotas_pactadas|Entero|SÝ|Bajo|V2|Media
+Financieras y administrativas|numero_cuotas_vencidas|Entero|SÝ|Bajo|V2|Alta
+Financieras y administrativas|max_dias_mora_historico|Entero|SÝ|Bajo|V2|Alta
+Financieras y administrativas|fecha_pago_matricula|Fecha|SÝ|Bajo|V2|Alta
+Financieras y administrativas|fecha_limite_pago|Fecha|SÝ|Bajo|V2|Media
+Financieras y administrativas|matricula_extemporanea|Binario|SÝ|Bajo|V2|Alta
+Financieras y administrativas|bloqueo_financiero|Binario|SÝ|Bajo|V2|Alta
+Financieras y administrativas|bloqueo_administrativo|Binario|SÝ|Bajo|V2|Media
+Financieras y administrativas|estado_financiero_cierre_periodo|Texto|No|Bajo|V2|Media
+Financieras y administrativas|beneficio_economico_tipo|Texto|SÝ|Bajo|V2|Media
+Financieras y administrativas|monto_beca|Decimal|SÝ|Bajo|V2|Media
+Financieras y administrativas|monto_descuento|Decimal|SÝ|Bajo|V2|Media
+Financieras y administrativas|monto_auxilio|Decimal|SÝ|Bajo|V3|Baja
+Financieras y administrativas|perdio_descuento|Binario|SÝ|Bajo|V2|Media
+Financieras y administrativas|perdio_financiacion|Binario|SÝ|Bajo|V2|Media
+Financieras y administrativas|solicito_refinanciacion|Binario|SÝ|Bajo|V2|Media
+Financieras y administrativas|aprobo_refinanciacion|Binario|SÝ|Bajo|V2|Media
+Financieras y administrativas|numero_solicitudes_apoyo|Entero|SÝ|Bajo|V2|Media
+Financieras y administrativas|respuesta_solicitud_apoyo|Texto|SÝ|Bajo|V2|Media
+Financieras y administrativas|fuente_financiacion|Texto|SÝ|Bajo|V2|Alta
+Financieras y administrativas|entidad_credito|Texto|SÝ|Bajo|V3|Baja
+Financieras y administrativas|es_beneficiario_credito_educativo|Binario|SÝ|Bajo|V2|Alta
+LMS / analÝtica de aprendizaje|num_accesos_lms|Entero|SÝ|Nulo|V1|Alta
+LMS / analÝtica de aprendizaje|dias_activos_lms|Entero|SÝ|Nulo|V1|Alta
+LMS / analÝtica de aprendizaje|tareas_no_entregadas|Entero|SÝ|Nulo|V1|Alta
+LMS / analÝtica de aprendizaje|entregas_tardias|Entero|SÝ|Nulo|V1|Alta
+LMS / analÝtica de aprendizaje|tiempo_promedio_plataforma|Decimal|SÝ, con cautela|Nulo|V2|Baja
+LMS / analÝtica de aprendizaje|recursos_consultados|Entero|SÝ|Nulo|V2|Media
+LMS / analÝtica de aprendizaje|cuestionarios_presentados|Entero|SÝ|Nulo|V1|Alta
+LMS / analÝtica de aprendizaje|participacion_foros|Entero|SÝ|Nulo|V2|Media
+LMS / analÝtica de aprendizaje|semanas_sin_actividad|Entero|SÝ|Nulo|V1|Alta
+LMS / analÝtica de aprendizaje|dias_desde_ultima_actividad|Entero|SÝ|Nulo|V2|Media
+LMS / analÝtica de aprendizaje|ultima_fecha_actividad|Fecha|No directo|Bajo|V2|Baja
+LMS / analÝtica de aprendizaje|actividad_primeras_2_semanas|Decimal|SÝ|Nulo|V1|Alta
+LMS / analÝtica de aprendizaje|actividad_primeras_4_semanas|Decimal|SÝ|Nulo|V1|Alta
+LMS / analÝtica de aprendizaje|variacion_actividad_vs_semestre_prev|Decimal|SÝ|Nulo|V2|Media
+LMS / analÝtica de aprendizaje|porcentaje_actividades_entregadas|Decimal|SÝ|Nulo|V2|Alta
+LMS / analÝtica de aprendizaje|num_sesiones_lms|Entero|SÝ|Bajo|V2|Media
+LMS / analÝtica de aprendizaje|duracion_total_lms|Decimal|SÝ|Bajo|V2|Media
+LMS / analÝtica de aprendizaje|duracion_promedio_sesion|Decimal|SÝ|Bajo|V2|Media
+LMS / analÝtica de aprendizaje|fecha_primer_acceso_periodo|Fecha|SÝ|Bajo|V2|Alta
+LMS / analÝtica de aprendizaje|fecha_ultimo_acceso_periodo|Fecha|SÝ|Bajo|V2|Media
+LMS / analÝtica de aprendizaje|acceso_fin_de_semana|Entero|SÝ|Bajo|V3|Baja
+LMS / analÝtica de aprendizaje|acceso_nocturno|Entero|SÝ|Bajo|V3|Baja
+LMS / analÝtica de aprendizaje|num_descargas_material|Entero|SÝ|Bajo|V2|Media
+LMS / analÝtica de aprendizaje|num_visualizaciones_contenido|Entero|SÝ|Bajo|V2|Media
+LMS / analÝtica de aprendizaje|num_mensajes_enviados|Entero|SÝ|Bajo|V3|Baja
+LMS / analÝtica de aprendizaje|num_respuestas_foro|Entero|SÝ|Bajo|V2|Media
+LMS / analÝtica de aprendizaje|num_lecturas_foro|Entero|SÝ|Bajo|V3|Baja
+LMS / analÝtica de aprendizaje|num_intentos_cuestionarios|Entero|SÝ|Bajo|V2|Media
+LMS / analÝtica de aprendizaje|promedio_calificacion_cuestionarios|Decimal|SÝ|Bajo|V2|Alta
+LMS / analÝtica de aprendizaje|num_actividades_asignadas|Entero|SÝ|Bajo|V2|Media
+LMS / analÝtica de aprendizaje|num_actividades_entregadas|Entero|SÝ|Bajo|V2|Alta
+LMS / analÝtica de aprendizaje|num_actividades_vencidas|Entero|SÝ|Bajo|V2|Alta
+LMS / analÝtica de aprendizaje|porcentaje_avance_curso_virtual|Decimal|SÝ|Bajo|V3|Baja
+LMS / analÝtica de aprendizaje|interaccion_docente_lms|Decimal|SÝ|Bajo|V3|Baja
+LMS / analÝtica de aprendizaje|interaccion_companeros_lms|Decimal|SÝ|Bajo|V3|Baja
+LMS / analÝtica de aprendizaje|uso_recursos_sincronicos|Decimal|SÝ|Bajo|V3|Baja
+LMS / analÝtica de aprendizaje|uso_recursos_asincronicos|Decimal|SÝ|Bajo|V2|Media
+LMS / analÝtica de aprendizaje|actividad_semana_1|Decimal|SÝ|Bajo|V2|Alta
+LMS / analÝtica de aprendizaje|actividad_semana_2|Decimal|SÝ|Bajo|V2|Alta
+LMS / analÝtica de aprendizaje|actividad_semana_3|Decimal|SÝ|Bajo|V2|Media
+LMS / analÝtica de aprendizaje|actividad_semana_4|Decimal|SÝ|Bajo|V2|Media
+LMS / analÝtica de aprendizaje|caida_actividad_semana_a_semana|Decimal|SÝ|Bajo|V2|Media
+LMS / analÝtica de aprendizaje|inactividad_previa_primer_parcial|Binario|SÝ|Bajo|V2|Alta
+LMS / analÝtica de aprendizaje|inactividad_previa_cierre|Binario|SÝ|Bajo|V2|Media
+Bienestar y acompa±amiento|uso_tutorias|Entero|SÝ|Bajo|V2|Media
+Bienestar y acompa±amiento|acompanamiento_academico|Binario|SÝ|Bajo|V2|Media
+Bienestar y acompa±amiento|nivelacion_participacion|Binario|SÝ|Nulo|V2|Media
+Bienestar y acompa±amiento|alertas_previas_bienestar|Entero|SÝ, con cautela|Nulo|V2|Baja
+Bienestar y acompa±amiento|participacion_monitorias|Entero|SÝ|Bajo|V2|Media
+Bienestar y acompa±amiento|uso_bienestar_no_sensible|Entero|SÝ, con cautela|Bajo|V2|Baja
+Bienestar y acompa±amiento|numero_tutorias|Entero|SÝ|Medio|V2|Alta
+Bienestar y acompa±amiento|numero_monitorias|Entero|SÝ|Medio|V2|Media
+Bienestar y acompa±amiento|numero_atenciones_academicas|Entero|SÝ|Medio|V2|Media
+Bienestar y acompa±amiento|numero_atenciones_bienestar|Entero|SÝ|Medio|V2|Media
+Bienestar y acompa±amiento|fecha_primera_atencion|Fecha|SÝ|Medio|V2|Media
+Bienestar y acompa±amiento|fecha_ultima_atencion|Fecha|SÝ|Medio|V2|Media
+Bienestar y acompa±amiento|remision_a_bienestar|Binario|SÝ|Medio|V2|Media
+Bienestar y acompa±amiento|asistencia_a_citas_programadas|Entero|SÝ|Medio|V2|Media
+Bienestar y acompa±amiento|inasistencia_a_citas_programadas|Entero|SÝ|Medio|V2|Media
+Bienestar y acompa±amiento|participacion_talleres_permanencia|Entero|SÝ|Medio|V2|Media
+Bienestar y acompa±amiento|participacion_induccion|Binario|SÝ|Medio|V2|Media
+Bienestar y acompa±amiento|participacion_reinduccion|Binario|SÝ|Medio|V3|Baja
+Bienestar y acompa±amiento|participacion_estrategias_alerta|Binario|SÝ|Medio|V2|Media
+Bienestar y acompa±amiento|cumplimiento_compromisos_academicos|Binario|SÝ|Medio|V3|Media
+Bienestar y acompa±amiento|tiene_plan_mejoramiento|Binario|SÝ|Medio|V3|Media
+Bienestar y acompa±amiento|cumple_plan_mejoramiento|Binario|SÝ|Medio|V3|Baja
+Bienestar y acompa±amiento|tipo_acompanamiento_recibido|Texto|SÝ|Medio|V2|Media
+Bienestar y acompa±amiento|canal_acompanamiento|Texto|SÝ|Medio|V3|Baja
+Bienestar y acompa±amiento|intensidad_acompanamiento|Decimal|SÝ|Medio|V2|Media
+Bienestar y acompa±amiento|seguimiento_activo_periodo|Binario|SÝ|Medio|V2|Media
+Target, trazabilidad y exclusiones|estado_admin_cierre_t|Texto|No directo|Alto|V1|Alta
+Target, trazabilidad y exclusiones|fecha_retiro|Fecha|No|Alto|V1|Alta
+Target, trazabilidad y exclusiones|motivo_retiro|Texto|No|Alto|V2|Media
+Target, trazabilidad y exclusiones|reinscrito_t1|Binario|No|Alto|V1|Alta
+Target, trazabilidad y exclusiones|reinscrito_t2|Binario|No|Alto|V1|Alta
+Target, trazabilidad y exclusiones|graduado_hasta_t2|Binario|No|Alto|V1|Alta
+Target, trazabilidad y exclusiones|transferencia_interna_hasta_t2|Binario|No|Alto|V1|Alta
+Target, trazabilidad y exclusiones|aplazamiento_formal_hasta_t2|Binario|No|Alto|V1|Alta
+Target, trazabilidad y exclusiones|target_desercion|Binario|No|Alto|V1|Alta
+Target, trazabilidad y exclusiones|horizonte_modelo|Texto|No|Nulo|V1|Media
+Target, trazabilidad y exclusiones|estado_matricula_t|Texto|No|Alto|V2|Alta
+Target, trazabilidad y exclusiones|estado_academico_t|Texto|No|Alto|V2|Media
+Target, trazabilidad y exclusiones|estado_financiero_t|Texto|No|Alto|V2|Media
+Target, trazabilidad y exclusiones|fecha_cancelacion_periodo|Fecha|No|Alto|V2|Alta
+Target, trazabilidad y exclusiones|fecha_aplazamiento|Fecha|No|Alto|V2|Alta
+Target, trazabilidad y exclusiones|fecha_reingreso|Fecha|No|Alto|V2|Media
+Target, trazabilidad y exclusiones|fecha_transferencia|Fecha|No|Alto|V2|Media
+Target, trazabilidad y exclusiones|tipo_retiro|Texto|No|Alto|V2|Alta
+Target, trazabilidad y exclusiones|retiro_voluntario|Binario|No|Alto|V2|Media
+Target, trazabilidad y exclusiones|retiro_forzoso|Binario|No|Alto|V2|Media
+Target, trazabilidad y exclusiones|retiro_academico|Binario|No|Alto|V2|Media
+Target, trazabilidad y exclusiones|retiro_financiero|Binario|No|Alto|V2|Media
+Target, trazabilidad y exclusiones|retiro_administrativo|Binario|No|Alto|V2|Media
+Target, trazabilidad y exclusiones|causa_no_continuidad_categoria|Texto|No|Alto|V2|Alta
+Target, trazabilidad y exclusiones|causa_no_continuidad_detalle|Texto|No|Alto|V2|Media
+Target, trazabilidad y exclusiones|no_reinscrito_t1|Binario|No|Alto|V2|Media
+Target, trazabilidad y exclusiones|no_reinscrito_t2|Binario|No|Alto|V2|Media
+Target, trazabilidad y exclusiones|continua_activo_t1|Binario|No|Alto|V2|Media
+Target, trazabilidad y exclusiones|continua_activo_t2|Binario|No|Alto|V2|Media
+Target, trazabilidad y exclusiones|egresado_no_graduado|Binario|No|Alto|V3|Media
+Target, trazabilidad y exclusiones|graduacion_en_curso|Binario|No|Alto|V3|Baja
+Target, trazabilidad y exclusiones|tiempo_hasta_retiro|Decimal|No|Alto|V3|Media
+Target, trazabilidad y exclusiones|tiempo_hasta_graduacion|Decimal|No|Alto|V3|Baja
+Target, trazabilidad y exclusiones|numero_interrupciones|Entero|No|Alto|V2|Media
+Target, trazabilidad y exclusiones|interrupcion_actual|Binario|No|Alto|V2|Media
+Target, trazabilidad y exclusiones|retorna_despues_de_interrupcion|Binario|No|Alto|V2|Media
+Egreso y graduaci¾n|cumple_requisitos_grado|Binario|No|Alto|V3|Media
+Egreso y graduaci¾n|estado_opcion_grado|Texto|No|Alto|V3|Media
+Egreso y graduaci¾n|fecha_egreso|Fecha|No|Alto|V3|Media
+Egreso y graduaci¾n|fecha_graduacion|Fecha|No|Alto|V3|Media
+Egreso y graduaci¾n|pendiente_requisito_grado|Binario|No|Alto|V3|Baja
+Egreso y graduaci¾n|pendiente_financiero_grado|Binario|No|Alto|V3|Baja
+Egreso y graduaci¾n|pendiente_documental_grado|Binario|No|Alto|V3|Baja
+Variables institucionales y contextuales|periodo_postpandemia|Binario|SÝ|Bajo|V3|Baja
+Variables institucionales y contextuales|periodo_virtualidad|Binario|SÝ|Bajo|V2|Media
+Variables institucionales y contextuales|periodo_hibrido|Binario|SÝ|Bajo|V2|Media
+Variables institucionales y contextuales|cambio_reglamento_academico|Binario|SÝ|Bajo|V3|Media
+Variables institucionales y contextuales|cambio_plan_estudios_flag|Binario|SÝ|Bajo|V2|Media
+Variables institucionales y contextuales|paro_o_interrupcion_calendario|Binario|SÝ|Bajo|V3|Baja
+Variables institucionales y contextuales|cambio_plataforma_lms|Binario|SÝ|Bajo|V3|Baja
+Variables institucionales y contextuales|campana_institucional_permanencia|Binario|SÝ|Bajo|V3|Baja
+Variables derivadas recomendadas|tasa_aprobacion|Decimal|SÝ|Bajo|V1|Alta
+Variables derivadas recomendadas|tasa_reprobacion|Decimal|SÝ|Bajo|V1|Alta
+Variables derivadas recomendadas|intensidad_perdida|Decimal|SÝ|Bajo|V2|Media
+Variables derivadas recomendadas|caida_rendimiento|Decimal|SÝ|Bajo|V1|Alta
+Variables derivadas recomendadas|engagement_bajo|Binario|SÝ|Nulo|V2|Media
+Variables derivadas recomendadas|cartera_riesgo|Binario|SÝ|Nulo|V2|Media
+Variables derivadas recomendadas|riesgo_academico_historico|Binario|SÝ|Nulo|V2|Media
+Variables derivadas recomendadas|variacion_promedio|Decimal|SÝ|Bajo|V2|Alta
+Variables derivadas recomendadas|variacion_creditos_inscritos|Decimal|SÝ|Bajo|V2|Media
+Variables derivadas recomendadas|variacion_asistencia|Decimal|SÝ|Bajo|V2|Media
+Variables derivadas recomendadas|indice_mora|Decimal|SÝ|Bajo|V2|Media
+Variables derivadas recomendadas|probabilidad_no_reinscripcion_regla|Decimal|SÝ|Bajo|V3|Baja
+Variables derivadas recomendadas|indice_compromiso_lms|Decimal|SÝ|Bajo|V2|Alta
+Variables derivadas recomendadas|indice_riesgo_financiero|Decimal|SÝ|Bajo|V2|Alta
+Variables derivadas recomendadas|indice_riesgo_academico|Decimal|SÝ|Bajo|V2|Alta
+Variables derivadas recomendadas|indice_riesgo_integrado|Decimal|SÝ|Bajo|V3|Media
+Variables derivadas recomendadas|rezago_relativo_cohorte|Decimal|SÝ|Bajo|V2|Alta
+Variables derivadas recomendadas|perdida_recurrente|Binario|SÝ|Bajo|V2|Alta
+Variables derivadas recomendadas|trayectoria_irregular|Binario|SÝ|Bajo|V2|Alta
+Variables derivadas recomendadas|carga_baja_recurrente|Binario|SÝ|Bajo|V2|Media
+Variables derivadas recomendadas|matricula_tardia_recurrente|Binario|SÝ|Bajo|V2|Media
+Variables derivadas recomendadas|inactividad_digital_temprana|Binario|SÝ|Bajo|V2|Alta
+Temporalidad predictiva y calendario|fecha_corte_predictiva|Fecha|No|Nulo|V3|CrÝtica
+Temporalidad predictiva y calendario|semana_corte|Entero|SÝ|Nulo|V3|CrÝtica
+Temporalidad predictiva y calendario|tipo_corte_predictivo|Texto|SÝ|Nulo|V3|CrÝtica
+Temporalidad predictiva y calendario|fecha_inicio_clases|Fecha|No|Nulo|V3|Alta
+Temporalidad predictiva y calendario|fecha_fin_clases|Fecha|No|Nulo|V3|Alta
+Temporalidad predictiva y calendario|fecha_primer_corte|Fecha|No|Nulo|V3|Alta
+Temporalidad predictiva y calendario|fecha_limite_pago_ordinario|Fecha|No|Nulo|V3|Alta
+Temporalidad predictiva y calendario|fecha_limite_cancelacion_asignaturas|Fecha|No|Nulo|V3|Media
+Temporalidad predictiva y calendario|semanas_academicas_efectivas|Entero|No|Nulo|V3|Media
+Plan de estudios y trayectoria|creditos_esperados_periodo_plan|Entero|SÝ|Nulo|V3|Alta
+Plan de estudios y trayectoria|desviacion_creditos_inscritos_vs_plan|Entero|SÝ|Nulo|V3|Alta
+Plan de estudios y trayectoria|asignaturas_criticas_inscritas|Entero|SÝ|Nulo|V3|Alta
+Plan de estudios y trayectoria|prerrequisitos_pendientes_flag|Booleano|SÝ|Bajo|V3|Media
+Contexto asignatura/grupo|tasa_historica_reprobacion_asignatura|Decimal|SÝ|Bajo|V3|Alta
+Contexto asignatura/grupo|tasa_historica_cancelacion_asignatura|Decimal|SÝ|Bajo|V3|Media
+Contexto asignatura/grupo|promedio_historico_nota_asignatura|Decimal|SÝ|Bajo|V3|Media
+Contexto asignatura/grupo|tamanio_grupo_asignatura|Entero|SÝ|Nulo|V3|Media
+Contexto asignatura/grupo|curso_critico_flag|Booleano|SÝ|Nulo|V3|Alta
+LMS y participaci¾n temprana|num_accesos_lms_hasta_semana_2|Entero|SÝ|Nulo|V3|Alta
+LMS y participaci¾n temprana|num_accesos_lms_hasta_semana_4|Entero|SÝ|Nulo|V3|CrÝtica
+LMS y participaci¾n temprana|num_accesos_lms_hasta_semana_8|Entero|SÝ|Nulo|V3|Alta
+LMS y participaci¾n temprana|dias_activos_lms_hasta_semana_4|Entero|SÝ|Nulo|V3|CrÝtica
+LMS y participaci¾n temprana|semanas_sin_actividad_hasta_corte|Entero|SÝ|Nulo|V3|CrÝtica
+LMS y participaci¾n temprana|tareas_no_entregadas_hasta_corte|Entero|SÝ|Nulo|V3|CrÝtica
+LMS y participaci¾n temprana|porcentaje_entregas_tardias_hasta_corte|Decimal|SÝ|Nulo|V3|Alta
+LMS y participaci¾n temprana|ultima_actividad_lms_fecha|Fecha|SÝ|Nulo|V3|Alta
+LMS y participaci¾n temprana|inactividad_antes_primer_parcial_flag|Booleano|SÝ|Nulo|V3|Alta
+Asistencia temprana|inasistencias_hasta_semana_4|Entero|SÝ|Nulo|V3|CrÝtica
+Asistencia temprana|inasistencias_hasta_semana_8|Entero|SÝ|Nulo|V3|Alta
+Asistencia temprana|porcentaje_asistencia_hasta_corte|Decimal|SÝ|Nulo|V3|CrÝtica
+Financiera temprana|liquidacion_generada_flag|Booleano|SÝ|Nulo|V3|Alta
+Financiera temprana|liquidacion_pagada_flag|Booleano|SÝ|Medio|V3|Alta
+Financiera temprana|fecha_pago_matricula|Fecha|SÝ|Medio|V3|Alta
+Financiera temprana|dias_mora_hasta_corte|Entero|SÝ|Nulo|V3|CrÝtica
+Financiera temprana|saldo_cartera_hasta_corte|Decimal|SÝ|Nulo|V3|Alta
+Financiera temprana|bloqueo_financiero_hasta_corte|Booleano|SÝ|Medio|V3|Alta
+Financiera temprana|cambios_plan_financiacion_periodo|Entero|SÝ|Bajo|V3|Media
+Financiera temprana|solicitud_financiacion_fecha|Fecha|SÝ|Bajo|V3|Media
+Contactabilidad institucional|correo_institucional_activo_flag|Booleano|SÝ|Nulo|V3|Media
+Contactabilidad institucional|telefono_actualizado_flag|Booleano|SÝ|Nulo|V3|Media
+Contactabilidad institucional|contactabilidad_estudiante|Texto|SÝ|Nulo|V3|Alta
+Contactabilidad institucional|respuesta_comunicaciones_institucionales|Decimal|SÝ|Bajo|V3|Media
+Solicitudes y trßmites estudiantiles|solicitudes_academicas_periodo|Entero|SÝ|Bajo|V3|Alta
+Solicitudes y trßmites estudiantiles|solicitudes_cancelacion_periodo|Entero|SÝ|Medio|V3|Alta
+Solicitudes y trßmites estudiantiles|solicitudes_aplazamiento_periodo|Entero|Opcional|Alto|V3|Alta
+Solicitudes y trßmites estudiantiles|solicitudes_cambio_jornada_modalidad|Entero|SÝ|Bajo|V3|Media
+Solicitudes y trßmites estudiantiles|tiempo_respuesta_solicitudes_dias|Decimal|SÝ|Bajo|V3|Media
+Metadatos de calidad del dato|sistema_fuente_variable|Texto|No|Nulo|V3|CrÝtica
+Metadatos de calidad del dato|cobertura_historica_desde|Texto|No|Nulo|V3|CrÝtica
+Metadatos de calidad del dato|porcentaje_faltantes_variable|Decimal|No|Nulo|V3|CrÝtica
+Metadatos de calidad del dato|cambio_definicion_historica_flag|Booleano|No|Nulo|V3|Alta
+Metadatos de calidad del dato|fecha_ultima_actualizacion_variable|Fecha|No|Nulo|V3|Alta

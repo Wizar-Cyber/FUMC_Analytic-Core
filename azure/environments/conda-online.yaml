@@ -1,0 +1,13 @@
+name: sat_fumc_online_env
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - azureml-inference-server-http==1.5.1
+      - lightgbm==4.5.0
+      - scikit-learn==1.5.2
+      - pandas==2.2.3
+      - numpy==1.26.4
+      - joblib==1.4.2

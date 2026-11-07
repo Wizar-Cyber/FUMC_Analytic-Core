@@ -1,0 +1,4 @@
+$schema: https://azuremlschemas.azureedge.net/latest/managedOnlineEndpoint.schema.json
+name: sat-fumc-endpoint
+auth_mode: key
+description: Endpoint de scoring de alertas tempranas SAT-FUMC.

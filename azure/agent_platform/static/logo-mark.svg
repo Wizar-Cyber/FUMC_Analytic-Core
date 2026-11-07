@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-labelledby="title desc">
+  <title id="title">Marca María Cano</title>
+  <desc id="desc">Isotipo azul, magenta y verde de la Fundación Universitaria María Cano</desc>
+  <path fill="#078fbd" d="M48 5c12 13 22 27 22 42 0 15-10 27-22 34-12-7-22-19-22-34 0-15 10-29 22-42Z"/>
+  <path fill="#078fbd" d="M48 30c-7 8-13 16-13 25 0 9 6 16 13 21 7-5 13-12 13-21 0-9-6-17-13-25Z"/>
+  <circle cx="48" cy="47" r="10" fill="#ed0063"/>
+  <path fill="#0aaa0a" d="M45 73C31 71 19 74 9 78c4 11 15 15 28 13 8-1 13-6 15-12-2-3-4-5-7-6Z"/>
+  <path fill="#0aaa0a" d="M51 73c14-2 26 1 36 5-4 11-15 15-28 13-8-1-13-6-15-12 2-3 4-5 7-6Z"/>
+</svg>

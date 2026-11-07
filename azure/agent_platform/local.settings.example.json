@@ -1,0 +1,28 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "DATA_MODE": "synthetic",
+    "AZURE_OPENAI_ENDPOINT": "https://<foundry-account>.openai.azure.com/",
+    "AZURE_OPENAI_CHAT_DEPLOYMENT": "<approved-chat-deployment>",
+    "AZURE_OPENAI_MODEL": "gpt-5-mini",
+    "AZURE_OPENAI_API_VERSION": "2025-04-01-preview",
+    "AZURE_OPENAI_INPUT_PRICE_PER_1M_TOKENS": "0.25",
+    "AZURE_OPENAI_OUTPUT_PRICE_PER_1M_TOKENS": "2.00",
+    "ACADEMIC_RAG_ENABLED": "false",
+    "AZURE_SEARCH_ENDPOINT": "",
+    "AZURE_SEARCH_INDEX": "",
+    "SERVICEBUS_NAMESPACE": "<service-bus>.servicebus.windows.net",
+    "ServiceBusConnection__fullyQualifiedNamespace": "<service-bus>.servicebus.windows.net",
+    "BLOB_STORAGE_URL": "https://<storage-account>.blob.core.windows.net",
+    "REVIEWS_CONTAINER": "student-case-reviews",
+    "CASE_REVIEWER_ALLOWED_PRINCIPAL_IDS": "<entra-user-object-id>",
+    "POC_ENABLED": "true",
+    "SYNTHETIC_STUDENT_COUNT": "5000",
+    "REVIEWER_AUTH_ENFORCED": "false",
+    "AZURE_ML_ENDPOINT_URL": "https://sat-fumc-endpoint.brazilsouth.inference.ml.azure.com/score",
+    "AZURE_ML_ENDPOINT_KEY": "<azure-ml-primary-or-secondary-key>",
+    "AZURE_ML_DEPLOYMENT_NAME": "blue"
+  }
+}

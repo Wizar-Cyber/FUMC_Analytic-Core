@@ -1,0 +1,13 @@
+name: sat_fumc_batch_scoring_env
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip:
+      - lightgbm==4.5.0
+      - scikit-learn==1.5.2
+      - pyarrow==18.1.0
+      - pandas==2.2.3
+      - numpy==1.26.4
+      - joblib==1.4.2
+      - matplotlib==3.9.4

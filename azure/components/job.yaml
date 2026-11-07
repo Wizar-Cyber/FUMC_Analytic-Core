@@ -1,0 +1,30 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+code: ../..
+command: >-
+  python azure/train_azure.py
+  --data_dir ${{inputs.data_folder}}
+  --output_dir ${{outputs.output_folder}}
+  --n_estimators ${{inputs.n_estimators}}
+  --learning_rate ${{inputs.learning_rate}}
+  --max_depth ${{inputs.max_depth}}
+  --num_leaves ${{inputs.num_leaves}}
+  --threshold ${{inputs.threshold}}
+inputs:
+  data_folder:
+    type: uri_folder
+    path: ../../data/raw
+  n_estimators: 350
+  learning_rate: 0.04
+  max_depth: 7
+  num_leaves: 31
+  threshold: 0.35
+outputs:
+  output_folder:
+    type: uri_folder
+environment:
+  image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+  conda_file: ../environments/conda.yaml
+compute: azureml:cpu-cluster
+display_name: sat-fumc-lightgbm-training
+experiment_name: SAT-FUMC-Desercion-Foundry
+description: Pipeline de entrenamiento del modelo único LightGBM para predicción de deserción en FUMC.

@@ -1,0 +1,26 @@
+$schema: https://azuremlschemas.azureedge.net/latest/commandJob.schema.json
+code: ../..
+command: >-
+  python src/run_multiagent_system.py
+  --data_dir ${{inputs.data_folder}}
+  --output_dir ${{outputs.output_folder}}
+  --model_path ${{inputs.model_folder}}/model.pkl
+  --threshold ${{inputs.threshold}}
+inputs:
+  data_folder:
+    type: uri_folder
+    path: ../../data/raw
+  model_folder:
+    type: mlflow_model
+    path: azureml:SAT_FUMC_LightGBM_Model:1
+  threshold: 0.35
+outputs:
+  output_folder:
+    type: uri_folder
+environment:
+  image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
+  conda_file: ../environments/conda-scoring.yaml
+compute: azureml:cpu-cluster
+display_name: sat-fumc-multiagent-scoring
+experiment_name: SAT-FUMC-Desercion-Scoring
+description: Flujo multiagente para validar, puntuar, recomendar intervenciones y generar salidas Power BI.
