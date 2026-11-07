@@ -9,9 +9,7 @@ __pycache__/
 *.csv
 *.xlsx
 *.docx
-!articulo_trabajo_grado.docx
 *.pptx
-!articulo_trabajo_grado.pptx
 *.zip
 .vscode/
 Documentos/
@@ -20,16 +18,12 @@ powerbi/
 outputs/poc_20261105_0404/
 local.settings.json
 *.log
-
+entregables/
 
 # keep repo focused on production project assets
 data/
 mlruns/
 powerbi/
 Documentos/
-*.docx
-!articulo_trabajo_grado.docx
-*.pptx
-!articulo_trabajo_grado.pptx
-*.zip
+entregables/
 
