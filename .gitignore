@@ -22,3 +22,13 @@ outputs/poc_20261105_0404/
 local.settings.json
 *.log
 
+
+# keep repo focused on production project assets
+data/
+mlruns/
+powerbi/
+Documentos/
+*.docx
+*.pptx
+*.zip
+
