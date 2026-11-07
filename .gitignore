@@ -9,15 +9,14 @@ __pycache__/
 *.csv
 *.xlsx
 *.docx
+!articulo_trabajo_grado.docx
 *.pptx
+!articulo_trabajo_grado.pptx
 *.zip
 .vscode/
 Documentos/
 mlruns/
 powerbi/
-articulo_trabajo_grado.md
-articulo_trabajo_grado.docx
-generate_docx.py
 outputs/poc_20261105_0404/
 local.settings.json
 *.log
@@ -29,6 +28,8 @@ mlruns/
 powerbi/
 Documentos/
 *.docx
+!articulo_trabajo_grado.docx
 *.pptx
+!articulo_trabajo_grado.pptx
 *.zip
 
