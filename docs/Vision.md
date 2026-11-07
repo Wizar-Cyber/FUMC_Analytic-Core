@@ -1,7 +1,6 @@
 # Vision.md — SAT-FUMC: Sistema de Alerta Temprana para la Deserción Estudiantil
 
-> **Estado:** Documento fundacional — Versión 1.0  
-> **Derivado de:** `contexto_fundacion_universitaria_maria_cano.md`, `definicion_del_proyecto_y_prompt_mejorado.md`, `diccionario_datos_SAT_desercion_FUMC.xlsx`
+> **Estado:** Documento fundacional — Versión 1.0
 
 ---
 

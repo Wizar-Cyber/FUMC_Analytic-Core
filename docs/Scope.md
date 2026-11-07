@@ -1,7 +1,6 @@
 # Scope.md — Alcance del Proyecto SAT-FUMC
 
-> **Estado:** Documento fundacional — Versión 1.0  
-> **Derivado de:** `definicion_del_proyecto_y_prompt_mejorado.md`, `diccionario_datos_SAT_desercion_FUMC.xlsx` (hojas: Alcance_Solicitud, Exclusiones_Modelo, Reglas_Calidad)
+> **Estado:** Documento fundacional — Versión 1.0
 
 ---
 

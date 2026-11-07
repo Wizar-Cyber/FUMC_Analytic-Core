@@ -1,7 +1,6 @@
 # AIArchitecture.md — Arquitectura de IA y ML del SAT-FUMC
 
-> **Estado:** Documento fundacional — Versión 1.0  
-> **Derivado de:** `definicion_del_proyecto_y_prompt_mejorado.md`, `matriz_de_skills_y_herramientas.md`, `diccionario_datos_SAT_desercion_FUMC.xlsx` (hojas: Guia_Modelado, Matriz_Uso_Modelo)
+> **Estado:** Documento fundacional — Versión 1.0
 
 ---
 

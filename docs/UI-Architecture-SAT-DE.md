@@ -1,36 +1,17 @@
 # Arquitectura de la Interfaz Gráfica: SAT-DE (FUMC Analytics Core)
 
-## 1. Prompt Optimizado para el Desarrollo de la Interfaz
+## 1. Requisitos funcionales de la interfaz
 
-**System Prompt / Prompt Principal:**
-"Actúa como Diseñador Lead de UX/UI y Desarrollador Full-Stack/Power BI especializado en soluciones EdTech y Analítica Predictiva. Tu objetivo es diseñar e implementar la interfaz gráfica del **Sistema de Alerta Temprana de Deserción Estudiantil (SAT-DE / FUMC Analytics Core)** para la Fundación Universitaria María Cano.
+La interfaz se diseñó para soportar la operación del sistema de permanencia estudiantil con el siguiente enfoque funcional:
 
-**Contexto Institucional y Arquitectura:**
-* **Entorno:** Azure Machine Learning + Orquestación Multi-Agente (Azure OpenAI GPT-4o mini) + Almacenamiento en Parquet.
-* **Sedes integradas en la demo:** Medellín, Cali, Popayán y Neiva; programas y facultades se toman del catálogo del mockup.
-* **Enfoque clave:** los agentes generan y muestran el análisis de demo automáticamente al terminar el lote. El score no es una causa ni una decisión. Alertas y seguimientos solo cambian registros simulados; no se envían mensajes ni se ejecutan intervenciones institucionales. Cualquier uso de datos reales o acción externa requiere validación institucional y supervisión profesional.
+- filtros globales por sede, programa, modalidad, semestre, nivel de riesgo y estado de intervención,
+- dashboard ejecutivo con indicadores clave de riesgo y cobertura,
+- vista operativa para priorizar estudiantes con mayor urgencia,
+- ficha individual con diagnóstico académico, financiero y socioeconómico,
+- síntesis del análisis con recomendaciones accionables y límites explicados,
+- gestión de alertas y seguimientos sobre registros sintéticos y sin ejecución de intervenciones externas.
 
-**Requerimientos de la Interfaz:**
-1. **Filtros Globales Superior:** Sede, Programa (e.g., Ingeniería de Software, Fisioterapia), Modalidad, Semestre, Nivel de Riesgo (Alto, Medio, Bajo) y Estado de Intervención (Pendiente, En Gestión, Resuelto).
-2. **Módulo 1 - Executive Dashboard (Nivel Directivo):**
-   * KPIs principales: Total matriculados, % de estudiantes en riesgo alto, tasa de efectividad de retención, tiempo promedio de intervención.
-   * Gráficos de distribución de riesgo por sede y programa.
-   * Matriz de correlación de variables principales (promedio acumulado, materias reprobadas, días de mora, asistencia, actividad en plataforma).
-
-3. **Módulo 2 - Vista Detallada de Estudiantes (Nivel Operativo/Tutor):**
-   * Tabla dinámica con búsqueda rápida, ordenable por probabilidad de deserción.
-   * Badges visuales de riesgo (*High*, *Medium*, *Low*).
-   * Columnas clave: Código, Nombre, Programa, Sede, Nivel de Riesgo, Factor Principal de Riesgo y Botón de Acción.
-
-4. **Módulo 3 - Ficha Individual del Estudiante (Diagnóstico Multi-Agente):**
-   * Panel con desglose del **Agente Académico** (historico de notas, materias filtro reprobadas, asistencia).
-   * Panel del **Agente Socioeconómico** (estrato, mora en pagos, soporte financiero).
-   * **Síntesis del agente:** resumen cualitativo del LLM que conserva el score reportado y explicita sus límites; no presenta correlaciones como causas.
-   * Acciones de apoyo propuestas, visibles como recomendaciones; la demo no las ejecuta.
-
-5. **Módulo 4 - Alertas y seguimientos de demo:**
-   * Reconocer/resolver una alerta y abrir/completar un seguimiento actualiza Azure Tables y su historial.
-   * La creación de una tarea es explícita y queda vinculada al perfil sintético; no inicia contacto externo ni retroalimenta automáticamente el entrenamiento."
+La propuesta visual prioriza claridad operativa, trazabilidad y comparación entre perfiles, manteniendo la demo dentro del contexto sintético validado para la arquitectura actual.
 
 ---
 
