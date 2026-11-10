@@ -1,4 +1,4 @@
-# DataArchitecture.md — Arquitectura de Datos SAT-FUMC
+# 03.01 | Arquitectura de datos del SAT-FUMC
 
 > **Estado:** Documento fundacional — Versión 1.0  
 > **Derivado de:** `diccionario_datos_SAT_desercion_FUMC.xlsx` (hojas: Tablas, Diccionario_Datos, Reglas_Calidad, Definicion_Target, Guia_Modelado)
@@ -97,22 +97,26 @@ target_desercion = 1
 ## 5. Flujo de Datos
 
 ```
-[Digital Twin / Fuentes Reales]
+[Fuentes FUMC autorizadas / Digital Twin sintético]
         ↓
-[ETL / Ingesta] → estudiante_periodo_corte (por corte)
-        ↓                ↓
-[Validación Calidad]   [target_trazabilidad] (separado)
-        ↓
-[Feature Engineering] → features_modelo_vXX.parquet
-        ↓
-[Entrenamiento / Predicción]
-        ↓
-[Predicciones: probabilidad_desercion, nivel_riesgo, shap_values]
-        ↓
-[predicciones_estudiante_periodo.parquet / .csv]
-        ↓
-[Power BI Dashboard]
+[Ingesta y calidad] → snapshot estudiante-periodo-corte
+        ↓                              ↓
+[target_trazabilidad separado]   [Features disponibles al corte]
+                                       ↓
+                 ┌─────────────────────┴────────────────────┐
+                 ↓ en paralelo                              ↓ en paralelo
+       [Azure ML · LightGBM]                 [Semantic Kernel · agentes]
+                 ↓                           académico/finanzas/bienestar
+                 └─────────────────────┬────────────────────┘
+                                       ↓
+              [Consolidación + Azure SQL operacional objetivo]
+                                       ↓
+                       [API autenticada → SPA única]
+                                       ↓
+                    [Revisión humana y seguimiento]
 ```
+
+La POC distribuida conserva registros sintéticos en Azure Tables/Blob. Al 2026-11-09, Azure SQL `SATFUMCOperational` está Online y las nueve tablas de `sql_schema.sql` fueron aplicadas; sin embargo, Functions todavía no consulta ni escribe en SQL. La integración del snapshot con Azure ML también sigue pendiente. Tener la base y su esquema desplegados no prueba que sean el almacenamiento operativo de la aplicación. El documento canónico de estado es [`ProductionArchitecture.md`](./ProductionArchitecture.md).
 
 ---
 

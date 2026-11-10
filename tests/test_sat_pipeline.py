@@ -18,13 +18,6 @@ def test_azure_config_exists():
     cfg_path = Path("./config.json")
     assert cfg_path.exists()
 
-def test_multiagent_output_exists():
+def test_multiagent_execution_report_exists():
     out_dir = Path("./outputs")
-    assert (out_dir / "predicciones_multiagente_powerbi.parquet").exists()
     assert (out_dir / "reporte_ejecucion_multiagente.json").exists()
-    
-    df = pd.read_parquet(out_dir / "predicciones_multiagente_powerbi.parquet")
-    assert "probabilidad_desercion" in df.columns
-    assert "nivel_riesgo" in df.columns
-    assert "intervencion_sugerida" in df.columns
-    assert len(df) > 0

@@ -1,13 +1,12 @@
 $schema: https://azuremlschemas.azureedge.net/latest/managedOnlineDeployment.schema.json
 name: blue
 endpoint_name: sat-fumc-endpoint
-model: azureml:SAT_FUMC_LightGBM_Model:1
+model: azureml:SAT_FUMC_LightGBM_Model:2
 code_configuration:
   code: model_code
   scoring_script: score.py
 environment: azureml:sat-fumc-online:4
 environment_variables:
-  ALERT_THRESHOLD: "0.35"
   MAX_BATCH_SIZE: "1000"
 instance_type: Standard_DS2_v2
 instance_count: 1

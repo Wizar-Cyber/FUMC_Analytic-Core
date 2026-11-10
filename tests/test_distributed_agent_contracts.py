@@ -15,6 +15,7 @@ from sat_agents.agents import (  # noqa: E402
     build_academic_prompt,
     build_socioeconomic_prompt,
     build_synthesis_prompt,
+    build_wellbeing_prompt,
     parse_analysis_response,
 )
 from sat_agents import agents as agents_module  # noqa: E402
@@ -35,7 +36,7 @@ from sat_agents.pilot_limits import (  # noqa: E402
     reserve_from_state,
 )
 from sat_agents.reviews import (  # noqa: E402
-    _powerbi_review_row,
+    _review_report_row,
     _public_review,
 )
 from sat_agents.synthetic_database import (  # noqa: E402
@@ -81,11 +82,13 @@ def test_agent_case_contract_accepts_synthetic_data_and_omits_case_id_from_promp
 
     socioeconomic_prompt = build_socioeconomic_prompt(case)
     academic_prompt = build_academic_prompt(case, [])
+    wellbeing_prompt = build_wellbeing_prompt(case)
 
     assert "syn-example-001" not in socioeconomic_prompt
     assert "syn-example-001" not in academic_prompt
     assert "350000" in socioeconomic_prompt
     assert "ING101" in academic_prompt
+    assert "syn-example-001" not in wellbeing_prompt
 
 
 @pytest.mark.parametrize(
@@ -166,6 +169,18 @@ def test_service_bus_agent_results_are_revalidated_before_orchestration():
     assert parse_agent_result("academic", academic)["analysis"]["citation_ids"] == [
         "reg-1"
     ]
+    wellbeing = {
+        "analysis": {
+            "summary": "Registro de acompañamiento disponible.",
+            "observations": [],
+            "limitations": [],
+            "citation_ids": [],
+        },
+        "token_usage": token_usage,
+    }
+    assert parse_agent_result("wellbeing", wellbeing)["analysis"]["summary"] == (
+        "Registro de acompañamiento disponible."
+    )
     academic["sources"][0]["source_uri"] = "javascript:alert(1)"
     with pytest.raises(ContractError, match="HTTPS"):
         parse_agent_result("academic", academic)
@@ -473,7 +488,7 @@ def test_public_review_projection_omits_case_id_and_raw_source_text():
     assert "https://example.invalid/reg" in serialized
 
 
-def test_powerbi_projection_exposes_llm_draft_and_human_decision_only():
+def test_review_report_projection_exposes_llm_draft_and_human_decision_only():
     proposal = {
         "review_id": "opaque-id",
         "case_id": "syn-private-token",
@@ -501,7 +516,7 @@ def test_powerbi_projection_exposes_llm_draft_and_human_decision_only():
             "sources": [
                 {
                     "id": "reg-1",
-                    "content": "El texto completo no debe llegar a Power BI.",
+                    "content": "El texto completo no debe llegar a una exportación.",
                 }
             ],
         },
@@ -516,7 +531,7 @@ def test_powerbi_projection_exposes_llm_draft_and_human_decision_only():
         "raw_prompt": "no mostrar",
     }
 
-    row = _powerbi_review_row(
+    row = _review_report_row(
         proposal,
         {
             "reviewer_id": "private-reviewer",
@@ -542,7 +557,7 @@ def test_powerbi_projection_exposes_llm_draft_and_human_decision_only():
     assert "El texto completo" not in serialized
 
 
-def test_powerbi_reviews_api_requires_reviewer_auth_and_returns_llm_rows(monkeypatch):
+def test_review_export_api_requires_reviewer_auth_and_returns_rows(monkeypatch):
     import function_app
 
     monkeypatch.setenv("DATA_MODE", "synthetic")
@@ -553,9 +568,9 @@ def test_powerbi_reviews_api_requires_reviewer_auth_and_returns_llm_rows(monkeyp
     async def list_rows():
         return [{"sintesis_llm": "Resultado real del sintetizador."}]
 
-    monkeypatch.setattr(function_app, "list_powerbi_reviews", list_rows)
+    monkeypatch.setattr(function_app, "list_review_report_rows", list_rows)
     response = asyncio.run(
-        function_app.get_powerbi_reviews(SimpleNamespace(headers={}))
+        function_app.get_review_report_rows_api(SimpleNamespace(headers={}))
     )
 
     assert response.status_code == 200
@@ -564,7 +579,7 @@ def test_powerbi_reviews_api_requires_reviewer_auth_and_returns_llm_rows(monkeyp
     }
 
 
-def test_powerbi_reviews_api_blocks_requests_without_reviewer_auth(monkeypatch):
+def test_review_export_api_blocks_requests_without_reviewer_auth(monkeypatch):
     import function_app
 
     monkeypatch.setenv("DATA_MODE", "synthetic")
@@ -573,9 +588,9 @@ def test_powerbi_reviews_api_blocks_requests_without_reviewer_auth(monkeypatch):
     async def unexpected_list_rows():
         raise AssertionError("El endpoint consultó Blob sin autenticar.")
 
-    monkeypatch.setattr(function_app, "list_powerbi_reviews", unexpected_list_rows)
+    monkeypatch.setattr(function_app, "list_review_report_rows", unexpected_list_rows)
     response = asyncio.run(
-        function_app.get_powerbi_reviews(SimpleNamespace(headers={}))
+        function_app.get_review_report_rows_api(SimpleNamespace(headers={}))
     )
 
     assert response.status_code == 503
@@ -681,16 +696,20 @@ def test_review_creation_persists_all_call_usage_without_case_token(monkeypatch)
                     "sources": [],
                     "token_usage": token_usage,
                 },
+                "wellbeing": {
+                    "analysis": {"summary": "Bienestar"},
+                    "token_usage": token_usage,
+                },
             }
         )
     )
 
     assert saved["review_id"] == "opaque-review-id"
-    assert saved["proposal"]["status"] == "generated"
-    assert saved["proposal"]["recommendation"]["human_review_required"] is False
+    assert saved["proposal"]["status"] == "pending_approval"
+    assert saved["proposal"]["recommendation"]["human_review_required"] is True
     assert saved["proposal"]["recommendation"]["automated_decision"] is False
-    assert proposal["token_usage"]["total"]["total_tokens"] == 360
-    assert proposal["cost_estimate"]["amount_usd"] == 0.000195
+    assert proposal["token_usage"]["total"]["total_tokens"] == 480
+    assert proposal["cost_estimate"]["amount_usd"] == 0.00026
     assert "case_id" not in saved["proposal"]
 
 
@@ -705,6 +724,62 @@ def test_reviewer_api_stays_blocked_until_entra_auth_is_enabled(monkeypatch):
     assert reviewer_id is None
     assert error.status_code == 503
     assert "Entra" in error.get_body().decode("utf-8")
+
+
+def test_model_feedback_endpoints_require_reviewer_auth(monkeypatch):
+    import function_app
+
+    monkeypatch.setenv("DATA_MODE", "synthetic")
+    monkeypatch.setenv("REVIEWER_AUTH_ENFORCED", "false")
+    request = SimpleNamespace(headers={})
+
+    post_response = function_app.submit_model_feedback(request)
+    get_response = function_app.list_model_feedback(request)
+
+    assert post_response.status_code == 503
+    assert get_response.status_code == 503
+    assert "Entra" in post_response.get_body().decode("utf-8")
+
+
+def test_aml_prediction_route_requires_reviewer_auth(monkeypatch):
+    import function_app
+
+    monkeypatch.setenv("DATA_MODE", "synthetic")
+    monkeypatch.setenv("REVIEWER_AUTH_ENFORCED", "false")
+    response = function_app.predict_with_azure_ml(SimpleNamespace(headers={}))
+
+    assert response.status_code == 503
+    assert "Entra" in response.get_body().decode("utf-8")
+
+
+def test_model_feedback_uses_authenticated_reviewer_identity(monkeypatch):
+    import function_app
+
+    monkeypatch.setenv("DATA_MODE", "synthetic")
+    monkeypatch.setattr(
+        function_app, "_authorize_reviewer", lambda request: ("entra-reviewer", None)
+    )
+    captured = {}
+    monkeypatch.setattr(
+        function_app,
+        "append_feedback_event",
+        lambda payload: captured.setdefault("payload", payload),
+    )
+    payload = {
+        "student_id": "ST-SYN-000001",
+        "decision": "confirmed_risk",
+        "reviewer_id": "spoofed-reviewer",
+    }
+    request = SimpleNamespace(
+        headers={},
+        get_body=lambda: json.dumps(payload).encode(),
+        get_json=lambda: payload,
+    )
+
+    response = function_app.submit_model_feedback(request)
+
+    assert response.status_code == 200
+    assert captured["payload"]["reviewer_id"] == "entra-reviewer"
 
 
 def _encoded_principal(principal_id):

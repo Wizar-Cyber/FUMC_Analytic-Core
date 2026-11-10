@@ -21,6 +21,19 @@ param aiServicesAccountName string = 'FUMCAnalitysReviewer'
 @description('Key Vault that securely stores the Entra application secret.')
 param keyVaultName string = 'fumcanalyticsre392393878'
 
+@description('Administrator login for the Azure SQL operational database.')
+param sqlAdminLogin string = 'satadmin'
+
+@secure()
+@description('Administrator password for the Azure SQL operational database. Supply directly at deployment time.')
+param sqlAdminPassword string
+
+@description('Azure SQL logical server name.')
+param sqlServerName string = 'satfumc-sql-${uniqueString(resourceGroup().id)}'
+
+@description('Operational Azure SQL database name.')
+param sqlDatabaseName string = 'SATFUMCOperational'
+
 @description('Existing Azure OpenAI model deployment name.')
 param openAiDeploymentName string = 'sat-gpt5-mini'
 
@@ -40,6 +53,7 @@ param reviewerPrincipalIds string
 var queueNames = [
   'socioeconomic-analysis'
   'academic-analysis'
+  'wellbeing-analysis'
   'agent-results'
 ]
 
@@ -90,6 +104,46 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
       bypass: 'AzureServices'
       defaultAction: 'Allow'
     }
+  }
+}
+
+resource sqlServer 'Microsoft.Sql/servers@2023-08-01-preview' = {
+  name: sqlServerName
+  location: location
+  properties: {
+    administratorLogin: sqlAdminLogin
+    administratorLoginPassword: sqlAdminPassword
+    version: '12.0'
+    publicNetworkAccess: 'Enabled'
+    minimalTlsVersion: '1.2'
+    restrictOutboundNetworkAccess: 'Disabled'
+  }
+}
+
+resource sqlDatabase 'Microsoft.Sql/servers/databases@2023-08-01-preview' = {
+  parent: sqlServer
+  name: sqlDatabaseName
+  location: location
+  sku: {
+    name: 'Basic'
+    tier: 'Basic'
+    capacity: 5
+  }
+  properties: {
+    collation: 'SQL_Latin1_General_CP1_CI_AS'
+    maxSizeBytes: 2147483648
+    zoneRedundant: false
+    readScale: 'Disabled'
+    requestedBackupStorageRedundancy: 'Local'
+  }
+}
+
+resource sqlAzureServicesFirewall 'Microsoft.Sql/servers/firewallRules@2023-08-01-preview' = {
+  parent: sqlServer
+  name: 'AllowAzureServices'
+  properties: {
+    startIpAddress: '0.0.0.0'
+    endIpAddress: '255.255.255.255'
   }
 }
 
@@ -412,3 +466,5 @@ output keyVaultName string = keyVault.name
 output serviceBusNamespaceName string = serviceBusNamespace.name
 output serviceBusNamespaceEndpoint string = '${serviceBusNamespace.name}.servicebus.windows.net'
 output functionStorageAccountName string = functionStorage.name
+output sqlServerName string = sqlServer.name
+output sqlDatabaseName string = sqlDatabase.name

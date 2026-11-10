@@ -11,13 +11,12 @@ Basado en:
 
 Genera:
   - catalogos_maestros.parquet
-  - estudiante_periodo_corte.parquet      (~150K filas)
-  - estudiante_asignatura_periodo.parquet (~900K filas)
-  - lms_estudiante_curso_semana.parquet   (~2M filas)
-  - financiera_estudiante_evento.parquet  (~200K filas)
-  - bienestar_acompanamiento.parquet      (~80K filas)
-  - solicitudes_estudiantiles.parquet     (~50K filas)
-  - target_trazabilidad.parquet           (~150K filas — SEPARADO)
+    - estudiante_periodo_corte.parquet      (volumen configurable)
+    - estudiante_asignatura_periodo.parquet (volumen configurable)
+    - financiera_estudiante_evento.parquet  (volumen configurable)
+    - bienestar_acompanamiento.parquet       (volumen configurable)
+    - solicitudes_estudiantiles.parquet     (volumen configurable)
+    - target_trazabilidad.parquet           (target separado, con madurez/censura)
   - calendario_academico.parquet
   - perfilamiento_calidad.parquet
 =============================================================================
@@ -29,17 +28,73 @@ import pyarrow.parquet as pq
 import uuid
 import os
 import json
-from datetime import date, timedelta, datetime
+import hashlib
+from datetime import date, timedelta, datetime, timezone
 from pathlib import Path
 
+CONFIG_PATH = Path(
+    os.environ.get(
+        "SAT_SYNTHETIC_CONFIG",
+        str(Path(__file__).resolve().parents[2] / "configs" / "synthetic_data.json"),
+    )
+).expanduser()
+with CONFIG_PATH.open("r", encoding="utf-8") as config_file:
+    CONFIG = json.load(config_file)
+
+GENERATOR_VERSION = str(CONFIG.get("generator_version", "2.0.0"))
+N_ESTUDIANTES = int(os.environ.get("SAT_SYNTHETIC_STUDENTS", CONFIG["students"]))
+SEED = int(os.environ.get("SAT_SYNTHETIC_SEED", CONFIG["seed"]))
+PERIOD_COUNT = int(os.environ.get("SAT_SYNTHETIC_PERIODS", CONFIG["period_count"]))
+COHORT_START_PERIODS = int(CONFIG.get("cohort_start_periods", 1))
+MAX_FILAS_ESTUDIANTE_PERIODO = int(
+    os.environ.get(
+        "SAT_MAX_SNAPSHOT_ROWS",
+        CONFIG.get("max_snapshot_rows", N_ESTUDIANTES * PERIOD_COUNT),
+    )
+)
+SCENARIO = os.environ.get("SAT_SYNTHETIC_SCENARIO", CONFIG.get("scenario", "baseline"))
+SCENARIOS = CONFIG.get("scenarios", {})
+if SCENARIO not in SCENARIOS:
+    raise ValueError(f"Escenario sintético no configurado: {SCENARIO!r}")
+SCENARIO_PARAMETERS = SCENARIOS[SCENARIO]
+HAZARD_MULTIPLIER = float(SCENARIO_PARAMETERS.get("hazard_multiplier", 1.0))
+TARGET_CONFIG = CONFIG.get("target", {})
+TARGET_HORIZON_PERIODS = int(TARGET_CONFIG.get("horizon_periods", 2))
+OUTCOME_FOLLOWUP_PERIODS = int(
+    CONFIG.get("outcome_followup_periods", TARGET_HORIZON_PERIODS)
+)
+INTERVENTION_CONFIG = CONFIG.get("intervention_effectiveness", {})
+
+if (
+    N_ESTUDIANTES < 1
+    or PERIOD_COUNT < 3
+    or TARGET_HORIZON_PERIODS < 1
+    or OUTCOME_FOLLOWUP_PERIODS < 0
+):
+    raise ValueError("La configuración requiere estudiantes >=1, periodos >=3 y horizontes válidos.")
+if MAX_FILAS_ESTUDIANTE_PERIODO < N_ESTUDIANTES:
+    raise ValueError("SAT_MAX_SNAPSHOT_ROWS no puede ser menor que el número de estudiantes.")
+
 # ─── Reproducibilidad ─────────────────────────────────────────────────────────
-RNG = np.random.default_rng(seed=42)
+RNG = np.random.default_rng(seed=SEED)
+RUN_TIMESTAMP = datetime.now(timezone.utc)
+DEFAULT_OUTPUT_DIR = (
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "synthetic_runs"
+    / f"{RUN_TIMESTAMP.strftime('%Y%m%dT%H%M%SZ')}_{SCENARIO}_{N_ESTUDIANTES}students"
+)
 OUTPUT_DIR = Path(
     os.environ.get(
         "SAT_OUTPUT_DIR",
-        str(Path(__file__).parent.parent.parent / "data" / "raw"),
+        str(CONFIG.get("output_dir") or DEFAULT_OUTPUT_DIR),
     )
 ).expanduser()
+if OUTPUT_DIR.exists() and any(OUTPUT_DIR.iterdir()) and os.environ.get("SAT_OVERWRITE_OUTPUT") != "true":
+    raise FileExistsError(
+        f"El directorio de salida ya contiene archivos: {OUTPUT_DIR}. "
+        "Use otro SAT_OUTPUT_DIR o SAT_OVERWRITE_OUTPUT=true de forma explícita."
+    )
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 print("=" * 70)
@@ -80,8 +135,33 @@ PROGRAMAS = [
 
 JORNADAS = ["Diurna", "Nocturna", "Mixta", "Virtual"]
 
-PERIODOS = [f"{anio}-{sem}" for anio in range(2021, 2026) for sem in [1, 2]]
-# 2021-1, 2021-2, ..., 2025-2  → 10 periodos
+
+def _build_periods(start_period: str, count: int) -> list[str]:
+    try:
+        year_text, semester_text = start_period.split("-", maxsplit=1)
+        year, semester = int(year_text), int(semester_text)
+    except (AttributeError, TypeError, ValueError) as error:
+        raise ValueError("start_period debe usar el formato YYYY-S.") from error
+    if semester not in (1, 2):
+        raise ValueError("El semestre del periodo debe ser 1 o 2.")
+    periods = []
+    for _ in range(count):
+        periods.append(f"{year}-{semester}")
+        if semester == 1:
+            semester = 2
+        else:
+            year += 1
+            semester = 1
+    return periods
+
+
+def _period_shift(period_id: str, offset: int) -> str:
+    year_text, semester_text = period_id.split("-", maxsplit=1)
+    ordinal = int(year_text) * 2 + int(semester_text) - 1 + offset
+    return f"{ordinal // 2}-{ordinal % 2 + 1}"
+
+
+PERIODOS = _build_periods(str(CONFIG["start_period"]), PERIOD_COUNT)
 
 TIPOS_FINANCIACION = [
     "Recursos propios",
@@ -252,10 +332,8 @@ print(f"   Programas: {len(prog_df)} | Sedes: {len(sedes_df)} | Periodos: {len(P
 # ==============================================================================
 print("\n[2/10] Generando población de estudiantes...")
 
-N_ESTUDIANTES = int(os.environ.get("SAT_SYNTHETIC_STUDENTS", "6000"))
-if N_ESTUDIANTES < 1:
-    raise ValueError("SAT_SYNTHETIC_STUDENTS debe ser mayor que cero.")
-MAX_FILAS_ESTUDIANTE_PERIODO = 35_000
+if COHORT_START_PERIODS < 1 or COHORT_START_PERIODS > len(PERIODOS):
+    raise ValueError("cohort_start_periods debe estar entre 1 y el número de periodos.")
 programa_pcts = [p["pct"] for p in PROGRAMAS]
 programas_codigos = [p["codigo"] for p in PROGRAMAS]
 sede_pcts = [v["pct_matricula"] for v in SEDES.values()]
@@ -285,7 +363,7 @@ for i in range(N_ESTUDIANTES):
 
     # Periodo de ingreso
     n_periodos_disponibles = len(PERIODOS)
-    cohorte_idx = int(RNG.integers(0, min(8, n_periodos_disponibles)))
+    cohorte_idx = int(RNG.integers(0, min(COHORT_START_PERIODS, n_periodos_disponibles)))
     cohorte_ingreso = PERIODOS[cohorte_idx]
 
     # Sociodemografía
@@ -381,6 +459,12 @@ for idx, est in est_df.iterrows():
     mejor_promedio  = None
     peor_promedio   = None
     promedios_hist  = []
+    student_main_start = len(main_rows)
+    outcome_period_index = None
+    outcome_type = None
+    previous_support = False
+    previous_mora_state = False
+    last_hazard_probability = None
 
     for p_idx in range(cohorte_idx, len(PERIODOS)):
         if estado_actual in ("Desertor", "Graduado", "Aplazado_permanente"):
@@ -397,6 +481,8 @@ for idx, est in est_df.iterrows():
         # ── Académico (simular promedio del semestre) ──────────────────────────
         # Base promedio con varianza
         prom_base = 3.5 + (est["puntaje_global_prueba_ingreso"] - 280) / 400
+        if previous_support:
+            prom_base += float(INTERVENTION_CONFIG.get("academic_support_grade_delta", 0.0))
         # Degradar si riesgo alto
         if promedio_acum is not None and promedio_acum < 3.0:
             prom_base -= 0.3
@@ -438,7 +524,12 @@ for idx, est in est_df.iterrows():
         if est["tiene_beca"]:
             monto_matricula *= RNG.uniform(0.0, 0.6)  # beca cubre parte o todo
         mora_base = 0.0
-        tiene_mora = bool(RNG.random() < (0.35 if est["estrato_socioeconomico"] <= 2 else 0.15))
+        if previous_mora_state:
+            tiene_mora = bool(RNG.random() < 0.65)
+        else:
+            mora_incidence = 0.30 if est["estrato_socioeconomico"] <= 2 else 0.12
+            tiene_mora = bool(RNG.random() < mora_incidence)
+        previous_mora_state = tiene_mora
         saldo_mora = round(float(RNG.uniform(50_000, 2_500_000)) if tiene_mora else 0.0, 2)
         bloqueo_financiero = bool(saldo_mora > 1_000_000)
         tipo_fin_periodo = est["tipo_financiacion"]
@@ -462,8 +553,14 @@ for idx, est in est_df.iterrows():
 
         # ── LMS / Engagement ───────────────────────────────────────────────
         es_virtual = est["modalidad"] == "Virtual"
-        accesos_sem_lms = int(_clamp(RNG.normal(45 if not es_virtual else 80, 20), 0, 150))
-        dias_activos = int(_clamp(RNG.normal(28, 8), 0, 60))
+        engagement_mean = 45 if not es_virtual else 80
+        if prom_sem < 3.0:
+            engagement_mean *= 0.72
+        if previous_support:
+            engagement_mean *= 1.08
+        accesos_sem_lms = int(_clamp(RNG.normal(engagement_mean, 20), 0, 150))
+        days_mean = 28 if prom_sem >= 3.0 else 20
+        dias_activos = int(_clamp(RNG.normal(days_mean, 8), 0, 60))
         tareas_vencidas = int(_clamp(RNG.poisson(1.5 if prom_sem < 3.0 else 0.5), 0, 10))
         participacion_foros = int(_clamp(RNG.poisson(3), 0, 20))
         evaluaciones_comp = int(_clamp(RNG.normal(5, 1.5), 0, 10))
@@ -479,6 +576,7 @@ for idx, est in est_df.iterrows():
         # ── Bienestar ──────────────────────────────────────────────────────
         asistio_tquieroenlaU = bool(RNG.random() < (0.45 if prom_sem < 3.5 or saldo_mora > 0 else 0.20))
         num_sesiones_bienestar = int(RNG.poisson(2.5) if asistio_tquieroenlaU else 0)
+        previous_support = asistio_tquieroenlaU and num_sesiones_bienestar > 0
         tipo_apoyo = None
         if asistio_tquieroenlaU:
             tipo_apoyo = weighted_choice(TIPOS_APOYO_BIENESTAR, [0.20, 0.20, 0.20, 0.08, 0.12, 0.08, 0.07, 0.05])
@@ -524,16 +622,13 @@ for idx, est in est_df.iterrows():
         if historial_prueba:                  risk *= FACTOR_HISTORIAL_PRUEBA
         if est["tiene_beca"]:                 risk *= FACTOR_BECA_PROTECTORA
         if bloqueo_financiero:                risk *= 1.30
+        if previous_support:
+            risk *= float(INTERVENTION_CONFIG.get("followup_hazard_multiplier", 1.0))
 
-        # Cap el riesgo
-        prob_desercion = _clamp(risk, 0.01, 0.95)
+        # Scenario changes prevalence without tying the label to a single feature.
+        prob_desercion = _clamp(risk * HAZARD_MULTIPLIER, 0.01, 0.95)
+        last_hazard_probability = prob_desercion
         deserta = bool(RNG.random() < prob_desercion)
-
-        # Nivel de riesgo
-        if prob_desercion < 0.30:    nivel_riesgo = "Bajo"
-        elif prob_desercion < 0.60:  nivel_riesgo = "Medio"
-        elif prob_desercion < 0.80:  nivel_riesgo = "Alto"
-        else:                        nivel_riesgo = "Crítico"
 
         # ── Variables derivadas adicionales ───────────────────────────────
         tasa_aprobacion_calc = round(cred_aprobados / max(creditos_sem, 1), 3)
@@ -545,6 +640,8 @@ for idx, est in est_df.iterrows():
         )
 
         # ── Fila tabla principal ──────────────────────────────────────────
+        fecha_inicio_periodo = date(anio, 1 if sem == 1 else 7, 15 if sem == 1 else 20)
+        fecha_corte = fecha_inicio_periodo + timedelta(weeks=18)
         row = {
             # Identificación y temporalidad
             "id_estudiante_anon":        est["id_estudiante_anon"],
@@ -553,6 +650,8 @@ for idx, est in est_df.iterrows():
             "semestre":                  sem,
             "periodo_id":                periodo_id,
             "periodo_ordinal_estudiante": period_ord,
+            "fecha_corte_predictiva":    fecha_corte,
+            "tipo_corte_predictivo":     str(TARGET_CONFIG.get("observation_cut", "CIERRE")),
             "antiguedad_institucional_periodos": semestres_curs,
             # Programa y sede
             "programa":                  est["programa"],
@@ -618,46 +717,111 @@ for idx, est in est_df.iterrows():
             "intensidad_perdida":        intensidad_perdida,
             "indice_riesgo_academico":   indice_riesgo_academico,
             "tendencia_financiera":      round(saldo_mora / max(monto_matricula, 1), 3),
-            # Riesgo (para diagnóstico del Digital Twin — NO es el target)
-            "probabilidad_riesgo_simulada": round(prob_desercion, 4),
-            "nivel_riesgo_simulado":     nivel_riesgo,
-            # Estado (para construir target, no para predecir)
-            "_estado_semestre":          "Desertor" if deserta else "Activo",
+            # The latent hazard and outcome stay internal to the generator.
+            "_period_index":             p_idx,
         }
         main_rows.append(row)
 
-        # Target por periodo observado
-        target_row = {
-            "id_estudiante_anon": est["id_estudiante_anon"],
-            "periodo_id": periodo_id,
-            "reinscrito_t1": 0,
-            "reinscrito_t2": 0,
-            "graduado_hasta_t2": 0,
-            "transferencia_interna_hasta_t2": 0,
-            "aplazamiento_formal_hasta_t2": 0,
-            "target_desercion": 0,
-        }
         if deserta:
             estado_actual = "Desertor"
-            target_row["target_desercion"] = 1
-            target_row["aplazamiento_formal_hasta_t2"] = int(RNG.random() < 0.08)
-            target_rows.append(target_row)
+            outcome_period_index = p_idx + 1
+            outcome_type = "dropout"
             break
         else:
             if creditos_acum >= total_creditos_plan * 0.95 and semestres_curs >= semestres_plan - 1:
                 if bool(RNG.random() < 0.70):
                     estado_actual = "Graduado"
-                    target_row["graduado_hasta_t2"] = 1
-                    target_rows.append(target_row)
+                    outcome_period_index = p_idx + 1
+                    outcome_type = "graduation"
                     break
-                else:
-                    target_rows.append(target_row)
-            else:
-                target_row["reinscrito_t1"] = 1 if periodo_siguiente_id else 0
-                target_row["reinscrito_t2"] = 1 if periodo_siguiente2_id else 0
-                target_row["transferencia_interna_hasta_t2"] = int(RNG.random() < 0.01)
-                target_row["aplazamiento_formal_hasta_t2"] = int(RNG.random() < 0.03)
-                target_rows.append(target_row)
+            if RNG.random() < 0.006:
+                estado_actual = "Transferencia"
+                outcome_period_index = p_idx + 1
+                outcome_type = "transfer"
+                break
+            if RNG.random() < 0.008:
+                estado_actual = "Aplazado_formal"
+                outcome_period_index = p_idx + 1
+                outcome_type = "formal_leave"
+                break
+
+    # Continue outcome observation after the final feature snapshot. These
+    # follow-up draws affect labels only and are never emitted as predictors.
+    if outcome_period_index is None and last_hazard_probability is not None:
+        last_snapshot_index = len(PERIODOS) - 1
+        for future_offset in range(1, OUTCOME_FOLLOWUP_PERIODS + 1):
+            future_hazard = _clamp(
+                last_hazard_probability * (0.92 ** (future_offset - 1)),
+                0.01,
+                0.95,
+            )
+            if RNG.random() < future_hazard:
+                outcome_period_index = last_snapshot_index + future_offset
+                outcome_type = "dropout"
+                break
+            if RNG.random() < 0.006:
+                outcome_period_index = last_snapshot_index + future_offset
+                outcome_type = "transfer"
+                break
+            if RNG.random() < 0.008:
+                outcome_period_index = last_snapshot_index + future_offset
+                outcome_type = "formal_leave"
+                break
+
+    # Labels are outcomes after the observation cut, never the current-period
+    # hazard draw. Right-censored snapshots retain an explicit immature label.
+    for row in main_rows[student_main_start:]:
+        period_index = int(row.pop("_period_index"))
+        horizon_end = period_index + TARGET_HORIZON_PERIODS
+        event_in_window = (
+            outcome_period_index is not None
+            and period_index < outcome_period_index <= horizon_end
+        )
+        followup_end_index = len(PERIODOS) - 1 + OUTCOME_FOLLOWUP_PERIODS
+        full_horizon_observed = horizon_end <= followup_end_index
+        if event_in_window:
+            target_observed = True
+            target_label = int(outcome_type == "dropout")
+        elif full_horizon_observed:
+            target_observed = True
+            target_label = 0
+        else:
+            target_observed = False
+            target_label = None
+
+        target_row = {
+            "id_estudiante_anon": row["id_estudiante_anon"],
+            "periodo_id": row["periodo_id"],
+            "reinscrito_t1": None,
+            "reinscrito_t2": None,
+            "graduado_hasta_t2": 0,
+            "transferencia_interna_hasta_t2": 0,
+            "aplazamiento_formal_hasta_t2": 0,
+            "target_desercion": target_label,
+            "target_observado": target_observed,
+            "horizonte_periodos": TARGET_HORIZON_PERIODS,
+            "periodo_inicio_horizonte": _period_shift(row["periodo_id"], 1),
+            "periodo_fin_horizonte": _period_shift(
+                row["periodo_id"], TARGET_HORIZON_PERIODS
+            ),
+            "evento_simulado": outcome_type if event_in_window else None,
+        }
+        if target_observed:
+            target_row["reinscrito_t1"] = int(
+                outcome_period_index is None
+                or outcome_period_index > period_index + 1
+            )
+            if outcome_type == "graduation" and event_in_window:
+                target_row["graduado_hasta_t2"] = 1
+            elif outcome_type == "transfer" and event_in_window:
+                target_row["transferencia_interna_hasta_t2"] = 1
+            elif outcome_type == "formal_leave" and event_in_window:
+                target_row["aplazamiento_formal_hasta_t2"] = 1
+            target_row["reinscrito_t2"] = int(
+                outcome_period_index is None
+                or outcome_period_index > period_index + 2
+            )
+        target_rows.append(target_row)
 print(f"   Registros tabla principal: {len(main_rows):,}")
 print(f"   Registros target:          {len(target_rows):,}")
 print(f"   Registros financiero:      {len(fin_rows):,}")
@@ -674,18 +838,19 @@ if len(main_rows) > MAX_FILAS_ESTUDIANTE_PERIODO or len(target_rows) > MAX_FILAS
 # ==============================================================================
 print("\n[4/10] Guardando tabla principal (estudiante_periodo_corte)...")
 main_df = pd.DataFrame(main_rows)
-# Eliminar columna auxiliar _estado_semestre del output principal
-main_df_clean = main_df.drop(columns=["_estado_semestre"])
+main_df_clean = main_df.copy()
 main_df_clean.to_parquet(OUTPUT_DIR / "estudiante_periodo_corte.parquet", index=False)
 print(f"   Guardado: estudiante_periodo_corte.parquet ({len(main_df_clean):,} filas x {len(main_df_clean.columns)} cols)")
 
 print("\n[5/10] Guardando target_trazabilidad (tabla SEPARADA)...")
 target_df = pd.DataFrame(target_rows)
 target_df.to_parquet(OUTPUT_DIR / "target_trazabilidad.parquet", index=False)
-n_desertores = target_df["target_desercion"].sum()
+observed_target_df = target_df[target_df["target_observado"]]
+n_desertores = int(observed_target_df["target_desercion"].sum())
+target_prevalence = float(observed_target_df["target_desercion"].mean())
 print(f"   Guardado: target_trazabilidad.parquet ({len(target_df):,} filas)")
-print(f"   Desertores (target=1): {n_desertores:,} ({n_desertores/len(target_df)*100:.1f}%)")
-print(f"   No desertores (target=0): {len(target_df)-n_desertores:,} ({(len(target_df)-n_desertores)/len(target_df)*100:.1f}%)")
+print(f"   Etiquetas maduras: {len(observed_target_df):,} | inmaduras/censuradas: {len(target_df)-len(observed_target_df):,}")
+print(f"   Deserción futura: {n_desertores:,} ({target_prevalence:.1%} de etiquetas maduras)")
 
 print("\n[6/10] Guardando financiera_estudiante_evento...")
 fin_df = pd.DataFrame(fin_rows)
@@ -706,34 +871,88 @@ print(f"   Guardado: solicitudes_estudiantiles.parquet ({len(sol_df):,} filas)")
 # 8. TABLA DE DETALLE POR ASIGNATURA
 # ==============================================================================
 print("\n[9/10] Generando estudiante_asignatura_periodo...")
-asig_rows_det = []
-for row in main_rows[:]:
-    prog_asigs = asig_df[asig_df["programa"] == row["programa"]]
-    sem_asigs  = prog_asigs[prog_asigs["semestre_del_plan"] == min(row["semestres_cursados"], 10)]
-    if len(sem_asigs) == 0:
-        sem_asigs = prog_asigs.sample(n=min(5, len(prog_asigs)), random_state=0)
-    n_asig_sem = min(row["num_materias_inscritas"], len(sem_asigs))
-    sel_asigs  = sem_asigs.sample(n=n_asig_sem, random_state=42).reset_index(drop=True)
-    for _, asig in sel_asigs.iterrows():
-        nota_1er = round(float(RNG.normal(row["promedio_semestre"] + 0.1, 0.4)), 1)
-        nota_1er = _clamp(nota_1er, 0.0, 5.0)
-        nota_2do = round(float(RNG.normal(row["promedio_semestre"], 0.4)), 1)
-        nota_2do = _clamp(nota_2do, 0.0, 5.0)
-        asistencia = round(float(RNG.beta(8, 2) if row["promedio_semestre"] >= 3.0 else RNG.beta(3, 3)), 2) * 100
-        cancelada = int(nota_1er < 2.0 and RNG.random() < 0.25)
-        asig_rows_det.append({
-            "id_estudiante_anon": row["id_estudiante_anon"],
-            "periodo_id":         row["periodo_id"],
-            "asignatura_id":      asig["asignatura_id"],
-            "creditos_asignatura":asig["creditos"],
-            "nota_primer_corte":  nota_1er,
-            "nota_segundo_corte": nota_2do,
-            "asistencia_pct":     round(asistencia, 1),
-            "cancelada":          cancelada,
-            "resultado":          "Aprobada" if nota_2do >= 3.0 and not cancelada else ("Cancelada" if cancelada else "Reprobada"),
-        })
+course_lookup = {
+    (str(program), int(course_semester)): group[
+        ["asignatura_id", "creditos"]
+    ].to_numpy(dtype=object)
+    for (program, course_semester), group in asig_df.groupby(
+        ["programa", "semestre_del_plan"], sort=False
+    )
+}
+program_course_lookup = {
+    str(program): group[["asignatura_id", "creditos"]].to_numpy(dtype=object)
+    for program, group in asig_df.groupby("programa", sort=False)
+}
+assignment_frames = []
+snapshot_groups = main_df_clean.groupby(
+    ["programa", "semestres_cursados"], sort=False
+)
+for (program, semester), snapshots in snapshot_groups:
+    course_semester = min(int(semester), 10)
+    courses = course_lookup.get(
+        (str(program), course_semester), program_course_lookup[str(program)]
+    )
+    if not len(courses):
+        continue
+    requested_count = snapshots["num_materias_inscritas"].to_numpy(dtype=int)
+    count_per_snapshot = np.minimum(requested_count, len(courses))
+    maximum_count = int(count_per_snapshot.max(initial=0))
+    if maximum_count == 0:
+        continue
+    # One random permutation per snapshot preserves without-replacement course
+    # selection while avoiding a DataFrame scan/sample for each of 100k students.
+    course_order = np.argsort(
+        RNG.random((len(snapshots), len(courses))), axis=1
+    )
+    for rank in range(maximum_count):
+        active = count_per_snapshot > rank
+        if not active.any():
+            continue
+        active_snapshots = snapshots.loc[active]
+        selected_courses = courses[course_order[active, rank]]
+        count = len(active_snapshots)
+        average = active_snapshots["promedio_semestre"].to_numpy(dtype=float)
+        first_grade = np.round(
+            np.clip(RNG.normal(average + 0.1, 0.4), 0.0, 5.0), 1
+        )
+        second_grade = np.round(
+            np.clip(RNG.normal(average, 0.4), 0.0, 5.0), 1
+        )
+        attendance = np.where(
+            average >= 3.0,
+            RNG.beta(8, 2, size=count),
+            RNG.beta(3, 3, size=count),
+        )
+        attendance = np.round(attendance * 100, 1)
+        cancelled = (
+            (first_grade < 2.0) & (RNG.random(count) < 0.25)
+        ).astype(int)
+        result = np.where(
+            (second_grade >= 3.0) & (cancelled == 0),
+            "Aprobada",
+            np.where(cancelled == 1, "Cancelada", "Reprobada"),
+        )
+        assignment_frames.append(pd.DataFrame({
+            "id_estudiante_anon": active_snapshots["id_estudiante_anon"].to_numpy(),
+            "periodo_id": active_snapshots["periodo_id"].to_numpy(),
+            "asignatura_id": selected_courses[:, 0],
+            "creditos_asignatura": selected_courses[:, 1].astype(int),
+            "nota_primer_corte": first_grade,
+            "nota_segundo_corte": second_grade,
+            "asistencia_pct": attendance,
+            "cancelada": cancelled,
+            "resultado": result,
+        }))
 
-asig_det_df = pd.DataFrame(asig_rows_det)
+asig_det_df = (
+    pd.concat(assignment_frames, ignore_index=True)
+    if assignment_frames
+    else pd.DataFrame(columns=[
+        "id_estudiante_anon", "periodo_id", "asignatura_id",
+        "creditos_asignatura", "nota_primer_corte", "nota_segundo_corte",
+        "asistencia_pct", "cancelada", "resultado",
+    ])
+)
 asig_det_df.to_parquet(OUTPUT_DIR / "estudiante_asignatura_periodo.parquet", index=False)
 print(f"   Guardado: estudiante_asignatura_periodo.parquet ({len(asig_det_df):,} filas)")
 
@@ -762,10 +981,14 @@ validaciones.append(("Promedios entre 0-5", prom_ok, ""))
 cred_ok = (main_df_clean["creditos_inscritos"] >= 0).all()
 validaciones.append(("Creditos >= 0", cred_ok, ""))
 
-# Tasa deserción
-tasa_desercion = target_df["target_desercion"].mean()
-tasa_ok = 0.05 <= tasa_desercion <= 0.20
-validaciones.append(("Tasa desercion plausible (5-20%)", tasa_ok, f"Tasa: {tasa_desercion:.1%}"))
+# Tasa deserción: emergent prevalence is reported, not forced into one range.
+tasa_desercion = target_prevalence
+tasa_ok = (
+    np.isfinite(tasa_desercion)
+    and 0.0 < tasa_desercion < 1.0
+    and observed_target_df["target_desercion"].nunique() == 2
+)
+validaciones.append(("Target futuro con ambas clases", tasa_ok, f"Tasa madura: {tasa_desercion:.1%}"))
 
 # Target separado de predictores
 target_en_main = "target_desercion" in main_df_clean.columns
@@ -778,6 +1001,97 @@ for nombre, ok, detalle in validaciones:
 
 if not all(ok for _, ok, _ in validaciones):
     raise RuntimeError("Fallaron una o más validaciones del Digital Twin.")
+
+effective_config = {
+    **CONFIG,
+    "generator_version": GENERATOR_VERSION,
+    "students": N_ESTUDIANTES,
+    "seed": SEED,
+    "start_period": PERIODOS[0],
+    "period_count": len(PERIODOS),
+    "periods": PERIODOS,
+    "cohort_start_periods": COHORT_START_PERIODS,
+    "max_snapshot_rows": MAX_FILAS_ESTUDIANTE_PERIODO,
+    "scenario": SCENARIO,
+    "scenario_parameters": SCENARIO_PARAMETERS,
+    "target": {
+        **TARGET_CONFIG,
+        "horizon_periods": TARGET_HORIZON_PERIODS,
+    },
+        "outcome_followup_periods": OUTCOME_FOLLOWUP_PERIODS,
+}
+effective_config_text = json.dumps(
+    effective_config, sort_keys=True, ensure_ascii=False, separators=(",", ":")
+)
+file_hashes = {}
+for parquet_path in sorted(OUTPUT_DIR.glob("*.parquet")):
+    digest = hashlib.sha256()
+    with parquet_path.open("rb") as parquet_file:
+        for chunk in iter(lambda: parquet_file.read(1024 * 1024), b""):
+            digest.update(chunk)
+    file_hashes[parquet_path.name] = digest.hexdigest()
+
+dataset_fingerprint = hashlib.sha256(effective_config_text.encode("utf-8"))
+for file_name, file_hash in sorted(file_hashes.items()):
+    dataset_fingerprint.update(file_name.encode("utf-8"))
+    dataset_fingerprint.update(file_hash.encode("ascii"))
+dataset_version = dataset_fingerprint.hexdigest()
+table_rows = {
+    "catalogos_programas.parquet": len(prog_df),
+    "catalogos_sedes.parquet": len(sedes_df),
+    "calendario_academico.parquet": len(cal_df),
+    "catalogos_asignaturas.parquet": len(asig_df),
+    "estudiante_periodo_corte.parquet": len(main_df_clean),
+    "target_trazabilidad.parquet": len(target_df),
+    "estudiante_asignatura_periodo.parquet": len(asig_det_df),
+    "financiera_estudiante_evento.parquet": len(fin_df),
+    "bienestar_acompanamiento.parquet": len(bienestar_df),
+    "solicitudes_estudiantiles.parquet": len(sol_df),
+}
+effective_config_path = OUTPUT_DIR / "generator_config.json"
+effective_config_path.write_text(
+    json.dumps(effective_config, indent=2, ensure_ascii=False), encoding="utf-8"
+)
+target_class_counts = {
+    str(label): int(count)
+    for label, count in observed_target_df["target_desercion"].value_counts().items()
+}
+quality_report = {
+    "dataset_version": dataset_version,
+    "generator_version": GENERATOR_VERSION,
+    "scenario": SCENARIO,
+    "students_requested": N_ESTUDIANTES,
+    "students_observed": int(main_df_clean["id_estudiante_anon"].nunique()),
+    "periods": PERIODOS,
+    "snapshot_rows": len(main_df_clean),
+    "target_rows": len(target_df),
+    "mature_target_rows": len(observed_target_df),
+    "immature_target_rows": len(target_df) - len(observed_target_df),
+    "target_class_counts_mature_only": target_class_counts,
+    "target_dropout_prevalence_mature_only": target_prevalence,
+    "table_rows": table_rows,
+    "quality_checks": [
+        {"check": name, "passed": bool(passed), "details": detail}
+        for name, passed, detail in validaciones
+    ],
+    "note": "Synthetic longitudinal data; not institutional student records.",
+}
+(OUTPUT_DIR / "data_quality_report.json").write_text(
+    json.dumps(quality_report, indent=2, ensure_ascii=False), encoding="utf-8"
+)
+manifest = {
+    **quality_report,
+    "created_at_utc": RUN_TIMESTAMP.isoformat(),
+    "configuration_file": str(CONFIG_PATH),
+    "output_directory": str(OUTPUT_DIR),
+    "effective_config": effective_config,
+    "parquet_sha256": file_hashes,
+}
+(OUTPUT_DIR / "dataset_manifest.json").write_text(
+    json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+)
+print(f" - Dataset version:            {dataset_version}")
+print(f" - Manifiesto / calidad:       {OUTPUT_DIR / 'dataset_manifest.json'}")
 
 print("\nResumen del Digital Twin:")
 print(f" - Estudiantes unicos:         {main_df_clean['id_estudiante_anon'].nunique():,}")

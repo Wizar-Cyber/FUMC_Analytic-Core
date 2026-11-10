@@ -333,9 +333,9 @@ except Exception as err:
     print(f"   Nota en SHAP: {err}")
 
 # =============================================================================
-# 10. GENERACIÓN DE PREDICCIONES PARA POWER BI
+# 10. GENERACIÓN DE PREDICCIONES CONSOLIDADAS
 # =============================================================================
-print("\n[9] Exportando predicciones completas para visualización en Power BI...")
+print("\n[9] Exportando predicciones consolidadas...")
 
 X_all = df[ALL_FEATURES].copy()
 y_proba_all = pipe.predict_proba(X_all)[:, 1]
@@ -386,13 +386,13 @@ for i in range(len(df)):
         "fecha_corte": datetime.now().strftime("%Y-%m-%d")
     })
 
-pbi_df = pd.DataFrame(export_rows)
-pbi_df.to_parquet(PRED_DIR / "predicciones_powerbi.parquet", index=False)
-pbi_df.to_csv(PRED_DIR / "predicciones_powerbi.csv", index=False)
+predictions_df = pd.DataFrame(export_rows)
+predictions_df.to_parquet(PRED_DIR / "predicciones_estudiante_periodo.parquet", index=False)
+predictions_df.to_csv(PRED_DIR / "predicciones_estudiante_periodo.csv", index=False)
 
 print(f"   Predicciones listas:")
-print(f"   -> {PRED_DIR / 'predicciones_powerbi.parquet'} ({len(pbi_df):,} registros)")
-print(f"   -> {PRED_DIR / 'predicciones_powerbi.csv'}")
+print(f"   -> {PRED_DIR / 'predicciones_estudiante_periodo.parquet'} ({len(predictions_df):,} registros)")
+print(f"   -> {PRED_DIR / 'predicciones_estudiante_periodo.csv'}")
 
 print("\n" + "=" * 70)
 print(f"PIPELINE COMPLETADO CON EXITO CON LOS MODELOS MAS POTENTES")

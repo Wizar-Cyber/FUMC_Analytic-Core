@@ -541,6 +541,9 @@ async def _load_case(tables: dict[str, Any], snapshot: dict[str, Any]) -> dict[s
     finance = await tables[TABLE_FINANCE].get_entity(
         partition_key=student_id, row_key=PERIOD_ID
     )
+    wellbeing = await tables[TABLE_WELLBEING].get_entity(
+        partition_key=student_id, row_key=PERIOD_ID
+    )
     academic_rows = []
     async for row in _query_entities(
         tables[TABLE_ACADEMICS], query_filter=f"PartitionKey eq '{student_id}'"
@@ -558,6 +561,12 @@ async def _load_case(tables: dict[str, Any], snapshot: dict[str, Any]) -> dict[s
             "socioeconomic_stratum": int(student["Stratum"]),
             "origin_city": str(student["City"]),
             "family_context": str(student["FamilyContext"]),
+        },
+        "wellbeing": {
+            "support_type": wellbeing.get("SupportType") or None,
+            "sessions": int(wellbeing.get("Sessions", 0)),
+            "attended": bool(wellbeing.get("Attended", False)),
+            "channel": wellbeing.get("Channel"),
         },
         "academic_signals": [
             {

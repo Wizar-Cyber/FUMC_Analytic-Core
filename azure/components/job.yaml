@@ -8,7 +8,8 @@ command: >-
   --learning_rate ${{inputs.learning_rate}}
   --max_depth ${{inputs.max_depth}}
   --num_leaves ${{inputs.num_leaves}}
-  --threshold ${{inputs.threshold}}
+  --minimum_recall ${{inputs.minimum_recall}}
+  --register_model
 inputs:
   data_folder:
     type: uri_folder
@@ -17,7 +18,7 @@ inputs:
   learning_rate: 0.04
   max_depth: 7
   num_leaves: 31
-  threshold: 0.35
+  minimum_recall: 0.80
 outputs:
   output_folder:
     type: uri_folder

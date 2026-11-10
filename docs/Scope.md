@@ -1,83 +1,35 @@
-# Scope.md — Alcance del Proyecto SAT-FUMC
+# 02.01 | Alcance del SAT-FUMC
 
-> **Estado:** Documento fundacional — Versión 1.0
+> Arquitectura canónica y estado actual: [`ProductionArchitecture.md`](./ProductionArchitecture.md).
 
----
+## 1. Alcance del diseño objetivo
 
-## 1. Dentro del Alcance (In-Scope)
+- Integrar, con autorización, snapshots de Académica, Finanzas, Bienestar y LMS.
+- Validar calidad, pseudonimización, temporalidad y separación de etiquetas antes del entrenamiento.
+- Ejecutar en paralelo la inferencia LightGBM en Azure ML y la red generativa Semantic Kernel/Durable Functions con GPT-5-mini.
+- Consolidar probabilidad, factores, resúmenes, límites y recomendaciones sin alterar la salida del modelo.
+- Entregar datos por API a una SPA autenticada: dashboard, ficha, alertas, revisión y seguimiento.
+- Requerir la decisión humana, registrarla con auditoría y utilizar feedback solo conforme al ciclo institucional de etiquetado.
+- Preparar Azure SQL para estado operacional; ADLS/Blob y Azure ML Data Assets para datos y artefactos históricos.
+- Incorporar CI, evaluación de calidad ML/LLM, MLOps, observabilidad, secretos en Key Vault y aprobación de despliegue.
 
-### 1.1 Cobertura Institucional
-- **Sedes:** Medellín (principal), Cali, Neiva, Popayán, Virtual (nacional/internacional).
-- **Programas:** Todos los programas de pregrado activos: Fisioterapia, Fonoaudiología, Terapia Ocupacional, Nutrición y Dietética, Actividad Física y Deporte, Administración de Empresas, Contaduría Pública, Administración en Salud (Virtual), Ingeniería de Software, Psicología.
-- **Jornadas:** Diurna, nocturna, mixta, virtual.
-- **Modalidades:** Presencial, virtual, híbrida.
-- **Ventana temporal:** Últimos 5 años académicos con granularidad por periodo (semestre).
+## 2. Implementado en la POC
 
-### 1.2 Generación de Datos Sintéticos (Digital Twin)
-- Datasets en formato `.parquet` representando la operación institucional de la FUMC.
-- Tablas: `estudiante_periodo_corte`, `estudiante_asignatura_periodo`, `lms_estudiante_curso_semana`, `financiera_estudiante_evento`, `bienestar_acompanamiento`, `solicitudes_estudiantiles`, `target_trazabilidad`, `calendario_academico_financiero`, `catalogos_maestros`.
-- Mínimo 100,000 registros en tabla principal; escala suficiente para simular Big Data.
+Datos sintéticos, pipeline ML local/job AML, contrato de scoring, Functions/Service Bus/Durable Functions, agentes académico/financiero/bienestar, GPT-5-mini y SPA están presentes. Al 2026-11-09, Bicep está desplegado, la Function App está Running con 33 funciones indexadas y Azure SQL Online con las nueve tablas aplicadas. El acceso anónimo recibe 401 y la ruta Entra redirige a Microsoft, pero no se validó sesión autenticada con respuesta 200. AML y SQL no están conectados al flujo Functions; la POC no es apta para decisiones reales.
 
-### 1.3 Arquitectura Multi-Agente
-- Orquestación de agentes con LangChain / CrewAI / AutoGen.
-- Agentes: Coordinador, Ingestor, Calidad de Datos, Feature Engineer, Entrenador, Evaluador, Explicador, Predictivo, Monitor.
+## 3. Fuera de alcance hasta contar con aprobación
 
-### 1.4 Pipeline de Machine Learning
-- Modelos candidatos: XGBoost, LightGBM, CatBoost, Random Forest, Redes Neuronales.
-- Selección automática del mejor modelo por métricas de clasificación (F1, Recall, AUC-ROC).
-- Explicabilidad mediante SHAP/LIME.
-- Cortes predictivos: inicio del semestre, semana 2, semana 4, primer corte, semana 8, cierre.
+- Conectores a SIS/LMS/finanzas/bienestar reales, identificadores directos o notas clínicas.
+- Decisiones o intervenciones automáticas, contacto al estudiante, asignación automática de becas o acciones académicas.
+- Afirmar desempeño institucional a partir del Digital Twin.
+- La SPA autenticada es el punto único de acceso operativo.
 
-### 1.5 Visualización — Power BI
-- Dashboard ejecutivo: tasa de riesgo por sede, facultad, programa.
-- Perfil individual: probabilidad de deserción (0–100%) + factores explicativos.
-- Gráficos de cascada (waterfall) para los factores de riesgo del estudiante.
-- Integración vía archivos Parquet/CSV o API REST.
+## 4. Criterios de aceptación para producción
 
-### 1.6 MLOps
-- Versionado de modelos y datasets.
-- Monitoreo de drift de datos y modelos.
-- Pipeline de re-entrenamiento programado.
+1. Fuentes, finalidad, target, cortes, disponibilidad temporal y retención aprobados por sus responsables.
+2. Holdout temporal institucional sin leakage; Recall ≥ 0,80 y métricas complementarias aprobadas, con capacidad de intervención y fairness evaluadas.
+3. Contrato común y prueba E2E que recorra snapshot→AML y agentes en paralelo→consolidación→Azure SQL→API→SPA.
+4. Revisión humana, identidad Entra, auditoría, pruebas de privacidad/seguridad y controles de datos sensibles.
+5. CI/CD, aprobación, monitoreo, alertas, carga, recuperación y rollback verificados.
 
----
-
-## 2. Fuera del Alcance (Out-of-Scope)
-
-| Elemento | Razón |
-|---|---|
-| Integración directa con sistemas transaccionales de la FUMC (ERP, LMS real) en Fase 0–3 | Requiere acceso institucional; se integra en Fase 5 |
-| Variables prohibidas como predictores (`fecha_retiro`, `motivo_retiro`, `reinscrito_t1`, `reinscrito_t2`, `graduado_hasta_t2`) | Regla crítica del diccionario de datos: fuga de información |
-| Diagnósticos clínicos o notas de consejería detalladas | Privacidad / datos sensibles |
-| Gestión de identidad de estudiantes reales (CÉDULA, correo institucional) | Solo IDs anonimizados (UUID/hash) |
-| Automatización de la intervención (envío automático de correos, citas) | Fase posterior; requiere aprobación institucional |
-| Programas de posgrado o educación continua | No contemplados en el contexto FUMC actual |
-
----
-
-## 3. Restricciones Técnicas
-
-- Variables del target (`target_desercion`) nunca se mezclan con predictores.
-- Toda variable usable como predictor debe ser observable **antes** de la fecha de corte predictivo.
-- Dato de sesgo sensible (género, estrato, etnia) se usa con evaluación de fairness documentada.
-- Formato de datos de salida: Parquet (procesamiento) + CSV/JSON (Power BI).
-
----
-
-## 4. Criterios de Éxito
-
-| KPI | Meta |
-|---|---|
-| F1-Score del modelo en conjunto de prueba | ≥ 0.75 |
-| Recall (sensibilidad a desertores) | ≥ 0.80 |
-| Cobertura de programas y sedes en el dataset sintético | 100% |
-| Tiempo de predicción por corte | < 5 minutos para 100K registros |
-| Dashboard funcional en Power BI | Mínimo 3 vistas (ejecutiva, programa, estudiante) |
-
----
-
-## 5. Supuestos
-
-- Los datos sintéticos del Digital Twin son estadísticamente representativos de la población real de la FUMC.
-- La definición de `target_desercion` del diccionario de datos es la fuente de verdad y no cambia durante el proyecto.
-- El equipo tiene acceso a Python 3.10+, bibliotecas de ML y Power BI Desktop.
-- Se respeta la hoja `Exclusiones_Modelo` del diccionario de datos como lista de exclusiones definitivas.
+El Recall ≥ 0,80 es un objetivo de aceptación pendiente de demostrar, no un compromiso que pueda garantizarse con el dataset sintético disponible.

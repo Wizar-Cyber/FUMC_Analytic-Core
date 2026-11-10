@@ -7,7 +7,9 @@ class AgentQuality(BaseAgent):
     """Audit the institutional data-quality rules before features or scoring."""
 
     VARS_PROHIBIDAS = [
-        "target_desercion", "reinscrito_t1", "reinscrito_t2", "no_reinscrito_t1",
+        "target_desercion", "target_observado", "horizonte_periodos",
+        "periodo_inicio_horizonte", "periodo_fin_horizonte", "evento_simulado",
+        "reinscrito_t1", "reinscrito_t2", "no_reinscrito_t1",
         "no_reinscrito_t2", "fecha_retiro", "motivo_retiro", "tipo_retiro",
         "causa_no_continuidad", "graduado_hasta_t2", "fecha_graduacion",
         "fecha_egreso", "cumple_requisitos_grado", "transferencia_interna_hasta_t2",
@@ -78,12 +80,44 @@ class AgentQuality(BaseAgent):
         keys_valid = null_keys == 0 and duplicate_keys == 0
         missing_targets = 0
         target_is_valid = True
+        target_mature_count = 0
+        target_immature_count = 0
         if target_df is not None:
             target_values = target_df["target_desercion"]
-            target_is_valid = bool(
-                target_values.notna().all()
-                and set(target_values.unique()).issubset({0, 1})
+            target_observed = (
+                target_df["target_observado"].fillna(False).astype(bool)
+                if "target_observado" in target_df
+                else pd.Series(True, index=target_df.index)
             )
+            mature_values = target_values[target_observed]
+            immature_values = target_values[~target_observed]
+            target_mature_count = int(target_observed.sum())
+            target_immature_count = int((~target_observed).sum())
+            target_is_valid = bool(
+                mature_values.notna().all()
+                and set(mature_values.unique()).issubset({0, 1})
+                and immature_values.isna().all()
+            )
+            if "target_observado" in target_df:
+                target_is_valid = target_is_valid and bool(
+                    target_df["target_observado"].notna().all()
+                    and target_df["target_observado"].isin([True, False]).all()
+                )
+            horizon_columns = {"periodo_inicio_horizonte", "periodo_fin_horizonte"}
+            if horizon_columns.issubset(target_df.columns):
+                try:
+                    forward_window_valid = all(
+                        self._period_order(start) > self._period_order(period)
+                        and self._period_order(end) >= self._period_order(start)
+                        for period, start, end in zip(
+                            target_df["periodo_id"],
+                            target_df["periodo_inicio_horizonte"],
+                            target_df["periodo_fin_horizonte"],
+                        )
+                    )
+                except (TypeError, ValueError):
+                    forward_window_valid = False
+                target_is_valid = target_is_valid and forward_window_valid
             target_keys_df = target_df[key_columns].drop_duplicates()
             source_keys_df = df[key_columns].drop_duplicates()
             missing_targets = int(
@@ -106,7 +140,8 @@ class AgentQuality(BaseAgent):
             (
                 f"tabla principal: {null_keys} llaves nulas, {duplicate_keys} duplicadas; "
                 f"target: {target_null_keys} llaves nulas, {target_duplicates} duplicadas, "
-                f"{missing_targets} sin correspondencia, binario válido={target_is_valid}"
+                f"{missing_targets} sin correspondencia, maduras={target_mature_count}, "
+                f"inmaduras={target_immature_count}, target válido={target_is_valid}"
                 if target_df is not None
                 else f"tabla principal: {null_keys} llaves nulas, {duplicate_keys} duplicadas; target no requerido"
             ),
@@ -303,12 +338,22 @@ class AgentQuality(BaseAgent):
             add_rule("Desbalance de clases", None, "No hay target; verificación solo aplica al entrenamiento")
             target_coverage = None
         else:
-            target_values = target_df["target_desercion"]
-            valid_target = target_values.notna().all() and set(target_values.unique()).issubset({0, 1})
+            target_observed = (
+                target_df["target_observado"].fillna(False).astype(bool)
+                if "target_observado" in target_df
+                else pd.Series(True, index=target_df.index)
+            )
+            target_values = target_df.loc[target_observed, "target_desercion"]
+            valid_target = (
+                target_values.notna().all()
+                and set(target_values.unique()).issubset({0, 1})
+            )
             target_counts = target_values.value_counts().to_dict()
             target_coverage = {
                 "clases": {str(key): int(value) for key, value in target_counts.items()},
                 "registros_sin_target": missing_targets,
+                "registros_target_maduro": int(target_observed.sum()),
+                "registros_target_inmaduro": int((~target_observed).sum()),
             }
             add_rule(
                 "Desbalance de clases",

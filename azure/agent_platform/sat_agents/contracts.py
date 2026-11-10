@@ -81,13 +81,14 @@ class AnalysisCase:
     origin_city: str | None
     family_context: str
     academic_signals: tuple[AcademicSignal, ...]
+    wellbeing: dict[str, Any]
 
     @classmethod
     def from_dict(cls, payload: Any) -> "AnalysisCase":
         data = _object(
             payload,
             "payload",
-            {"case_id", "model_probability", "economic", "academic_signals"},
+            {"case_id", "model_probability", "economic", "academic_signals", "wellbeing"},
         )
         case_id = data.get("case_id")
         if not isinstance(case_id, str) or not _CASE_ID.fullmatch(case_id):
@@ -176,6 +177,26 @@ class AnalysisCase:
                 )
             )
 
+        wellbeing = _object(
+            data.get("wellbeing", {}),
+            "wellbeing",
+            {"support_type", "sessions", "attended", "channel"},
+        )
+        sessions = _number(
+            wellbeing.get("sessions", 0), "wellbeing.sessions", 0, 100, integer=True
+        )
+        attended = wellbeing.get("attended")
+        if attended is not None and not isinstance(attended, bool):
+            raise ContractError("'wellbeing.attended' debe ser booleano o nulo.")
+        parsed_wellbeing = {
+            "support_type": _optional_text(
+                wellbeing.get("support_type"), "wellbeing.support_type", 120
+            ),
+            "sessions": int(sessions or 0),
+            "attended": attended,
+            "channel": _optional_text(wellbeing.get("channel"), "wellbeing.channel", 80),
+        }
+
         return cls(
             case_id=case_id,
             model_probability=probability,
@@ -187,6 +208,7 @@ class AnalysisCase:
             ),
             family_context=family_context,
             academic_signals=tuple(signals),
+            wellbeing=parsed_wellbeing,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -203,6 +225,7 @@ class AnalysisCase:
             "academic_signals": [
                 signal.to_dict() for signal in self.academic_signals
             ],
+            "wellbeing": self.wellbeing,
         }
 
     def agent_context(self) -> dict[str, Any]:
@@ -218,6 +241,7 @@ class AnalysisCase:
             "academic_signals": [
                 signal.to_dict() for signal in self.academic_signals
             ],
+            "wellbeing": self.wellbeing,
         }
 
 
@@ -261,8 +285,8 @@ def parse_analysis_response(
 def parse_agent_result(agent: str, payload: Any) -> dict[str, Any]:
     import json
 
-    if agent == "socioeconomic":
-        data = _object(payload, "socioeconomic_result", {"analysis", "token_usage"})
+    if agent in {"socioeconomic", "wellbeing"}:
+        data = _object(payload, f"{agent}_result", {"analysis", "token_usage"})
         return {
             "analysis": parse_analysis_response(json.dumps(data.get("analysis"))),
             "token_usage": _parse_token_usage(data.get("token_usage")),

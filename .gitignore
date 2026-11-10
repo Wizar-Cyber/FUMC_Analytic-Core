@@ -1,9 +1,9 @@
 
-# project hygiene
+# Secretos, entornos locales y archivos temporales
 .env
 .venv/
 __pycache__/
-*.pyc
+*.py[cod]
 *.pkl
 *.parquet
 *.csv
@@ -11,20 +11,22 @@ __pycache__/
 *.docx
 *.pptx
 *.zip
-.vscode/
-Documentos/
-mlruns/
-powerbi/
-outputs/poc_20261105_0404/
-local.settings.json
 *.log
-entregables/
-articulo_trabajo_grado.md
+local.settings.json
 
-# keep repo focused on production project assets
+# Datos/experimentos generados o con posible contenido sensible
 data/
 mlruns/
 powerbi/
 Documentos/
-entregables/
+outputs/poc_20261105_0404/
+
+# Artículo canónico y entregables asociados: se mantienen versionables
+!articulo_trabajo_grado.md
+!articulo_trabajo_grado.docx
+!entregables/
+entregables/*
+!entregables/articulo_trabajo_grado.md
+!entregables/articulo_trabajo_grado.docx
+!entregables/generate_docx.py
 

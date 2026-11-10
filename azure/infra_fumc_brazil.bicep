@@ -122,5 +122,5 @@ resource monthlyBudget 'Microsoft.Consumption/budgets@2021-10-01' = {
   }
 }
 
-output workspaceId string = amlWorkspace.id
-output workspaceUrl string = amlWorkspace.properties.workspaceUrl
+output workspaceId string = amlWorkspace.properties.workspaceId
+output workspaceResourceId string = amlWorkspace.id

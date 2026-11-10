@@ -1,7 +1,7 @@
 {
   "ingesta": {
     "registros_estudiantes_periodo": 27975,
-    "registros_target": 0,
+    "registros_target": 27975,
     "num_sedes_cubiertas": 5,
     "num_programas_cubiertos": 10,
     "num_periodos_cubiertos": 10,
@@ -11,13 +11,13 @@
       "financiera_estudiante_evento.parquet",
       "solicitudes_estudiantiles.parquet"
     ],
-    "dataset_version": "7001ef01745ebdef564dcee23f986fb4327019c7e6fa6d088d44d3c3a1875c6c"
+    "dataset_version": "74c47f95ff2083592b9c06c03113d5655f84119df444a03c8be3d1f7f4f3118e"
   },
   "calidad": {
-    "tasa_cumplimiento_calidad": 77.78,
+    "tasa_cumplimiento_calidad": 80.0,
     "reglas_auditadas": 13,
-    "reglas_evaluables": 9,
-    "reglas_no_evaluables": 4,
+    "reglas_evaluables": 10,
+    "reglas_no_evaluables": 3,
     "fuga_detectada": true,
     "faltantes_por_columna": {
       "promedio_semestre_anterior": 6000,
@@ -25,15 +25,21 @@
       "tipo_beca": 22581,
       "tipo_apoyo_bienestar": 18006
     },
-    "target": null,
-    "dataset_version": "7001ef01745ebdef564dcee23f986fb4327019c7e6fa6d088d44d3c3a1875c6c",
+    "target": {
+      "clases": {
+        "0": 24950,
+        "1": 3025
+      },
+      "registros_sin_target": 0
+    },
+    "dataset_version": "74c47f95ff2083592b9c06c03113d5655f84119df444a03c8be3d1f7f4f3118e",
     "detalle_reglas": [
       {
         "regla": "PK estudiante-periodo",
         "severidad": "crítica",
         "cumple": true,
         "estado": "cumple",
-        "detalle": "tabla principal: 0 llaves nulas, 0 duplicadas; target no requerido"
+        "detalle": "tabla principal: 0 llaves nulas, 0 duplicadas; target: 0 llaves nulas, 0 duplicadas, 0 sin correspondencia, binario válido=True"
       },
       {
         "regla": "Integridad de sedes",
@@ -108,16 +114,16 @@
       {
         "regla": "Desbalance de clases",
         "severidad": "alta",
-        "cumple": null,
-        "estado": "no_evaluable",
-        "detalle": "No hay target; verificación solo aplica al entrenamiento"
+        "cumple": true,
+        "estado": "cumple",
+        "detalle": "proporción por clase: {'0': 24950, '1': 3025}"
       },
       {
         "regla": "Versionado del dataset",
         "severidad": "media",
         "cumple": true,
         "estado": "cumple",
-        "detalle": "snapshot: 7001ef01745ebdef564dcee23f986fb4327019c7e6fa6d088d44d3c3a1875c6c"
+        "detalle": "snapshot: 74c47f95ff2083592b9c06c03113d5655f84119df444a03c8be3d1f7f4f3118e"
       }
     ]
   },

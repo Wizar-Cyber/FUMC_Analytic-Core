@@ -1,117 +1,46 @@
-# Preparación para Azure y operación institucional
+# 13.02 | Lista de preparación para producción
 
-## Estado comprobado de esta POC
+> El estado global y la evidencia Azure están en [`ProductionArchitecture.md`](./ProductionArchitecture.md) y [`CloudDeploymentArchitecture.md`](./CloudDeploymentArchitecture.md). **Infraestructura desplegada no equivale a producto institucional listo.** Corte: 2026-11-09.
 
-La última ejecución batch local procesó 27.975 filas, creó 59 features y produjo las salidas Power BI/HTML. En calidad, 7 de 9 reglas evaluables pasaron; hubo 14 valores `avance_plan_pct` fuera del rango 0–100 (marcados como faltantes), faltantes sin motivo normalizado y cuatro reglas no evaluables.
+## 1. Matriz de preparación
 
-- Los Parquet disponibles son un Digital Twin sintético: no existe aún un conector a SIS, LMS, finanzas ni bienestar.
-- La unidad de evaluación es estudiante × periodo. Hay 27.975 registros sintéticos de 6.000 estudiantes y una tabla separada de trazabilidad/target. El generador impone un máximo de 35.000 filas en estas dos tablas; las tablas auxiliares pueden ser mayores.
-- La red actual son etapas Python determinísticas (ingesta, calidad, features, scoring, reglas de intervención y monitoreo); no son agentes LLM autónomos ni ejecutores distribuidos.
-- El entrenamiento Azure y local ahora comparten el contrato de features. La calidad bloquea llaves, etiquetas o cobertura inválidas y el endpoint comprueba el contrato del modelo.
-- El agente implementa las 13 categorías de calidad del diccionario institucional; disponibilidad a fecha de corte y fairness quedan explícitamente no evaluables cuando faltan datos/etiquetas de referencia. Los valores fuera de rango se marcan faltantes para el imputador y se reportan.
-- La ejecución genera Parquet/CSV para Power BI y un HTML agregado, autocontenido y sin identificadores individuales.
-- Azure CLI y `azd` están autenticados localmente. Para la POC de agentes se creó una cuenta AI Services y un deployment GPT-5-mini; no se han creado jobs, endpoints de Azure ML, reportes Power BI ni conexiones a datos reales desde este entorno.
-- Hay una app experimental separada en `azure/agent_platform` para agentes Semantic Kernel distribuidos; está configurada como código, pero no desplegada ni conectada a un modelo, índice RAG, cola o fuente institucional. Ver [DistributedAgentsAzure.md](./DistributedAgentsAzure.md).
+| Área | Estado | Evidencia / brecha |
+|---|---|---|
+| Aprovisionamiento Azure | **Completado para la POC** | Bicep `Succeeded`; Function App Linux/Python 3.11 `Running`; Storage, Key Vault, Service Bus, Application Insights, Azure OpenAI y SQL provisionados |
+| Publicación Functions | **Completada** | Core Tools v4/build remoto; host inició y 33 funciones se indexaron |
+| Acceso Entra | **Configurado; prueba parcial** | Rutas anónimas `401`; login Entra `302`. Sin `200` posterior a autenticación interactiva |
+| SQL | **Base/esquema listos, integración pendiente** | `SATFUMCOperational` Online y nueve tablas creadas; Functions sigue usando Azure Tables/Blob |
+| AML → Functions | **Pendiente** | El Digital Twin de la POC genera su score; no se verificó invocación del endpoint AML desde la app |
+| Datos FUMC autorizados | **Pendiente** | No existen conectores institucionales ni aprobación de tratamiento |
+| Evidencia ML | **Insuficiente para promoción** | Recall ≥ 0,80 no demostrado; métricas históricas no conciliadas; job no ejecutado en esta verificación |
+| Prueba E2E autenticada | **Pendiente** | No se completó sign-in con cuenta permitida ni ejecución de caso autenticado |
+| Operación y CD | **Pendiente** | Sin CD institucional con OIDC/aprobaciones/rollback, SLO productivos, política privada o plan de operación validado |
 
-El proyecto es una POC técnica; no está aprobado para decisiones estudiantiles productivas. Antes de usar datos reales se requieren autorización institucional, evaluación de privacidad, validación académica, plan de intervención humana y aprobación de TI/seguridad.
+## 2. Bloqueos antes de datos reales
 
-La nueva app de agentes LLM mantiene las mismas restricciones y no reemplaza el scoring determinístico existente. La recomendación LLM es solo un borrador; para iniciar una intervención, el equipo debe revisar y registrar una decisión.
+1. **Gobierno:** aprobar finalidad, fuentes, base legal, responsable, privacidad, residencia, minimización, retención y acceso.
+2. **Target y temporalidad:** acordar definición de deserción, madurez de outcome, ventanas y features disponibles en cada corte; resolver censoring y datos faltantes.
+3. **Datos y calidad:** integrar fuentes autorizadas, pseudonimizar, versionar datasets y probar duplicados, leakage, drift y reglas de calidad.
+4. **Modelo:** evaluación temporal con holdout institucional y separación por estudiante/cohorte; Recall ≥ 0,80 junto con precisión, F1, AUC, calibración, tasa de alertas, capacidad y fairness. Bloquear promoción si no supera los gates.
+5. **Integración funcional:** compartir un snapshot/version común entre AML y agentes; conservar score/provenance; probar errores, timeout, idempotencia, DLQ y contrato end-to-end.
+6. **Persistencia:** conectar el repositorio a Azure SQL (actualmente solo hay esquema), agregar migraciones/versionado, RBAC, auditoría, backup/restore, retención y pruebas de escritura/lectura.
+7. **Identidad y seguridad:** completar prueba de usuario autorizado, validar allowlist, Managed Identity, referencias Key Vault, mínimo privilegio, red, privacidad, escaneo y respuesta a incidentes.
+8. **Operación:** CI/CD con OIDC y ambientes, revisión y rollback; App Insights con dashboards, alertas, latencia, costo, errores, SLO y runbooks.
+9. **Uso humano:** validación con orientadores y formación. Toda salida generativa es borrador; no habilitar decisiones automáticas ni contacto al estudiante.
 
-La corrida reducida de entrenamiento (20 árboles, solo para validar el script) obtuvo Recall 1,00, precisión 0,105, AUC 0,648 y F1 0,190 en datos sintéticos. No es una evaluación de modelo aprobada: demuestra que Recall alto puede generar demasiadas alertas y que hay que validar precisión, calibración, carga de intervención y cohortes reales antes de escoger un umbral.
+## 3. Orden recomendado de cierre
 
-## Arquitectura recomendada por fases
+1. Completar inicio de sesión Entra y probar una lectura de bajo impacto con `200` como revisor permitido.
+2. Confirmar inicialización sintética, Managed Identity y roles de Storage/Service Bus/Azure OpenAI.
+3. Ejecutar una prueba controlada de un caso y una aprobación/rechazo sintético; validar telemetría y errores.
+4. Diseñar y probar la integración Azure SQL en entorno no productivo; no afirmar persistencia SQL hasta probarla desde Functions.
+5. Integrar AML solo cuando haya contrato común, endpoint autorizado y pruebas de scoring.
+6. Mantener sin uso institucional hasta completar gobierno, evaluación y operación de los puntos anteriores.
 
-### Fase 1 — POC con Parquet (ahora)
+## 4. Reentrenamiento y retroalimentación
 
-El batch actual procesa en memoria con pandas y se validó solo con 27.975 filas; no hay pruebas de carga ni SLA medido. Para volúmenes mayores se requiere benchmark y posiblemente procesamiento particionado con Fabric/Spark/Azure ML, más scoring batch escalable.
+La revisión del orientador es una señal de proceso, no la etiqueta de deserción. El target solo se actualiza cuando la fuente institucional confirma el resultado y se cumple la ventana aprobada. Reentrenar en jobs versionados de Azure ML; comparar candidato/champion, auditar fairness y aprobar promoción con rollback antes de recibir tráfico.
 
-1. Mantener los Parquet versionados como entregas inmutables en Azure Blob Storage o ADLS Gen2. No es necesario crear una base transaccional solo para entrenar un modelo tabular.
-2. Registrar el conjunto como Azure ML Data Asset `uri_folder`; entrenar y evaluar con un Azure ML Command Job.
-3. Guardar modelo registrado, métricas, predicciones y reportes en el Workspace/ADLS. Ejecutar scoring batch por corte académico (o diario mientras se valida la operación).
-4. Conectar Power BI/Fabric al Parquet de salida en ADLS/OneLake y programar la actualización de su modelo semántico. El HTML local es un resumen rápido; no reemplaza un PBIX/modelo semántico con identidad y seguridad institucional.
+## 5. Criterio de salida
 
-### Fase 2 — Integración con fuentes reales
-
-Primero definir el sistema fuente, propietario, tablas/API, claves, semántica temporal, SLA, mecanismo de extracción y autorización. Para extracción programada usar Data Factory o Fabric Data Factory; para APIs/eventos que de verdad requieran segundos/minutos, evaluar Logic Apps/API Management o Event Hubs según el mecanismo que ofrezca el sistema fuente. En ambos casos validar y conservar los datos curados en el lake antes de usarlos.
-
-Un endpoint online solo calcula un score a partir de atributos que ya recibió: no consulta ni sincroniza por sí mismo el SIS/LMS. Una frecuencia corta no convierte datos atrasados en tiempo real. La universidad debe confirmar si un corte diario/horario satisface el proceso de acompañamiento.
-
-Considerar Azure SQL/Fabric Warehouse cuando haya una necesidad demostrada de transacciones, consulta concurrente de baja latencia, integración operacional de casos/intervenciones o contratos SQL. No usarlo como requisito previo para almacenar Parquet histórico de entrenamiento.
-
-### Fase 3 — Producción institucional
-
-- Despliegue IaC, ambientes dev/test/prod, aprobación de modelo y rollback; despliegues blue/green y pruebas de carga antes de habilitar tráfico.
-- Managed Identity para Azure ML, Storage y Power BI; RBAC de mínimo privilegio, secretos en Key Vault, redes privadas cuando lo exija TI y auditoría de accesos.
-- Clasificación de datos, minimización/pseudonimización, tabla de correspondencia protegida fuera del modelo, retención y borrado definidos por el responsable institucional.
-- Revisiones periódicas de calibración, deriva, falsos negativos, cobertura y equidad con etiquetas reales. No llamar “drift” a una tasa alta de riesgo sin compararla con una línea base.
-- Revisión humana de cada alerta/intervención; el sistema no debe negar servicios ni producir decisiones académicas/financieras automatizadas.
-
-## Contrato de datos y ML
-
-- `estudiante_periodo_corte.parquet`: una fila por `id_estudiante_anon + periodo_id`; llaves no nulas y únicas.
-- `target_trazabilidad.parquet`: etiquetas de entrenamiento, binaria y separada de los predictores. Nunca se envía al endpoint de inferencia.
-- La predicción acepta registros con las columnas esperadas por el modelo registrado y calcula las mismas features derivadas que el entrenamiento. Cambios al esquema requieren entrenar/versionar/publicar un nuevo modelo.
-- La validación temporal usa por defecto los dos periodos más recientes disponibles; se deben confirmar las ventanas de etiqueta y que no exista leakage temporal antes de aceptar métricas.
-- Las recomendaciones del agente de explicabilidad son reglas de negocio, no valores SHAP causales. La explicación debe mostrarse como apoyo al profesional, no como causa probada.
-
-## Ejecución Azure ML
-
-Requisitos: Azure CLI con extensión `ml`, acceso RBAC al Workspace, Storage disponible y un compute `cpu-cluster` creado (o actualizar `compute` en `azure/components/job.yaml` al recurso autorizado). Autenticarse en el terminal con `az login`; no almacenar credenciales en archivos.
-
-Desde la raíz del repositorio, configurar la suscripción y valores por defecto del Workspace definidos en `config.json`:
-
-```powershell
-az extension add --name ml
-az login
-$config = Get-Content .\config.json | ConvertFrom-Json
-az account set --subscription $config.subscription_id
-az configure --defaults group=$config.resource_group workspace=$config.workspace_name
-
-az ml data create --name fumc-sat-data --version 1 `
-  --path ./data/raw --type uri_folder
-```
-
-El archivo `.amlignore` excluye datos, modelos, outputs, `mlruns` y documentos del snapshot de código; los Parquet solo se envían como input explícito del job/Data Asset. Revisar esta lista antes de incorporar nuevos directorios con datos institucionales.
-
-Para una corrida de POC con los Parquet locales, revisar que `azure/components/job.yaml` apunte a `../../data/raw` y lanzar:
-
-```powershell
-az ml job create --file azure/components/job.yaml --stream
-```
-
-Al usar el Data Asset de Storage, sustituir el `path` de `data_folder` por `azureml:fumc-sat-data:1`. Revisar métricas, split temporal, artefactos, registro del modelo y salida HTML/Parquet antes de promoverlo. No considerar aprobado un modelo solo porque el job terminó correctamente.
-
-Después de aprobar una versión del modelo, ejecutar la red completa de agentes sobre el lote de scoring:
-
-```powershell
-az ml job create --file azure/components/scoring_job.yaml --stream
-```
-
-El manifiesto de scoring referencia la versión 1 del modelo para la POC. Actualizarla a la versión realmente registrada y usar el Data Asset versionado para `data_folder`. Esta ejecución produce predicciones, reporte de calidad/monitoreo, recomendaciones heurísticas y dashboard agregado.
-
-Para el endpoint de prueba, confirmar primero región, SKU, cuota, permisos y coste. Crear el entorno y los recursos con los nombres/versiones aprobados:
-
-```powershell
-az ml environment create --file azure/environments/online-environment.yaml
-az ml online-endpoint create --file azure/endpoints/endpoint.yaml
-az ml online-deployment create --file azure/endpoints/deployment.yaml --all-traffic
-```
-
-`deployment.yaml` referencia la versión 1 del modelo y un tamaño de instancia de ejemplo; actualizar ambos al modelo y SKU disponibles en el Workspace. Probar autenticación, esquema, latencia, lote máximo y errores con datos sintéticos antes de habilitar consumo institucional.
-
-La configuración del Workspace se lee de `config.json` y puede sobrescribirse con `AZURE_SUBSCRIPTION_ID`, `AZURE_RESOURCE_GROUP` y `AZUREML_WORKSPACE_NAME`. En Azure usar Managed Identity; localmente usar una sesión Azure CLI autorizada.
-
-## Visualización
-
-- El pipeline local produce `outputs/dashboard_resumen.html` y `outputs/predicciones_multiagente_powerbi.parquet`.
-- El job de entrenamiento Azure produce `dashboard_resumen.html` y `predicciones_powerbi.parquet` en su carpeta de salida.
-- El dashboard HTML contiene agregados por riesgo, sede y programa; no expone IDs individuales. El acceso a las tablas de detalle en Power BI debe tener roles, propósito definido y controles institucionales.
-- No hay un archivo PBIX publicado ni un modelo semántico Power BI dentro del repositorio. Deben construirse en el tenant autorizado usando las salidas curadas y medidas validadas por la Universidad.
-
-## Criterios de aceptación antes de producción
-
-1. Conector a fuente real autorizado, contrato de datos y SLA de actualización acordados.
-2. Tests de calidad/leakage, integración, scoring, carga, seguridad y recuperación aprobados.
-3. Recall, precisión, calibración y brechas entre grupos validados con cohortes reales y aprobados por responsables académicos; resolver el objetivo documentado de Recall ≥ 0,80 frente al 73,2% reportado en una prueba anterior.
-4. Dataset Power BI y HTML con cifras reconciliadas con la corrida, control de acceso y revisión de privacidad.
-5. Propietarios operativos, alertas, revisión humana, retención, soporte, rollback y reentrenamiento documentados.
+La solución permanece como POC sintética. El despliegue de recursos y la aplicación del esquema SQL son hitos de infraestructura; no prueban desempeño, integración ni aptitud para priorizar estudiantes reales.

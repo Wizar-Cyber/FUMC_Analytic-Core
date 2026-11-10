@@ -86,7 +86,7 @@ function setBlocked(message, showLogin = false) {
 function setReady() {
   authenticated = true;
   authNotice.className = "notice ready";
-  authNotice.textContent = "Conexión Entra verificada · resultados de demo generados por la red multiagente.";
+  authNotice.textContent = "Conexión Entra verificada · datos sintéticos; análisis GPT solo tras iniciar un lote.";
   document.querySelector("#login-link").hidden = true;
   document.querySelector("#sidebar-status-text").textContent = "Conectada";
   document.querySelector("#sidebar-status-dot").classList.remove("offline");
@@ -410,7 +410,7 @@ function renderResults(reviews = []) {
   const empty = document.querySelector("#results-empty");
   list.replaceChildren();
   empty.hidden = reviews.length > 0;
-  empty.textContent = "Los resultados aparecerán aquí al terminar un lote.";
+  empty.textContent = "Sin análisis GPT todavía. Inicia un lote de hasta 5 casos pendientes para generar resultados.";
   for (const review of reviews.slice(0, 5)) {
     const row = document.createElement("li");
     row.className = "pending-item";
@@ -663,8 +663,8 @@ async function loadDashboard() {
     return true;
   } catch (error) {
     if (error.status === 404) {
-      renderLocalDemoDashboard();
-      return true;
+      setBlocked("API de gestión no disponible; no se muestran datos locales de demostración.");
+      return false;
     }
     setBlocked(error.message || "No se pudo cargar el dashboard.", error.status === 401);
     return false;
@@ -1016,7 +1016,7 @@ async function loadStudents() {
     setStatus("#student-list-status", "Consulta aplicada en backend; los filtros se conservan al paginar.");
   } catch (error) {
     if (error.status === 404) {
-      renderLocalStudents();
+      setStatus("#student-list-status", "API no disponible; no se muestran perfiles locales de demostración.");
       return;
     }
     setStatus("#student-list-status", error.message || "No se pudo cargar el listado.");
@@ -1225,13 +1225,13 @@ async function loadProfile(studentId) {
       document.querySelector("#profile-analysis").hidden = false;
       document.querySelector("#profile-recommendations").hidden = false;
       document.querySelector("#analysis-content").replaceChildren();
-      appendText(document.querySelector("#analysis-content"), "p", "Este registro aún no tiene un análisis. Usa Actualizar en el dashboard para iniciar el flujo.");
+      appendText(document.querySelector("#analysis-content"), "p", "Este perfil todavía no tiene un análisis de agentes. En Dashboard, inicia un lote de hasta 5 casos pendientes; el lote procesa los casos más antiguos y puede no incluir este perfil.");
       document.querySelector("#recommendations-content").replaceChildren();
       appendText(document.querySelector("#recommendations-content"), "p", "Las recomendaciones aparecerán cuando los agentes terminen el análisis.");
     }
   } catch (error) {
     if (error.status === 404) {
-      renderLocalProfile(studentId);
+      appendText(document.querySelector("#profile-content"), "p", "No se cargó el perfil: la API no está disponible. No se muestran expedientes locales de demostración.", "profile-loading");
       return;
     }
     appendText(document.querySelector("#profile-content"), "p", error.message || "No se pudo cargar el expediente.", "profile-loading");
@@ -1313,12 +1313,21 @@ function renderAnalysis(review, panelSelector, contentSelector) {
   if (panel) panel.hidden = false;
   if (content) content.replaceChildren();
   const recommendation = review.recommendation || {};
-  appendText(content, "p", `Resultado ${review.status === "generated" ? "generado" : "registrado"} · probabilidad ${formatNumber((review.model_probability || 0) * 100, 1)}% · sin decisión ni acción automática.`);
+  const statusLabel = review.status === "pending_approval"
+    ? "pendiente de revisión humana"
+    : review.status === "generated"
+      ? "generado"
+      : `decisión humana: ${review.status || "registrada"}`;
+  appendText(content, "p", `Resultado ${statusLabel} · probabilidad ${formatNumber((review.model_probability || 0) * 100, 1)}% · sin decisión automatizada.`);
   appendText(content, "h3", "Síntesis del LLM");
   appendText(content, "p", recommendation.summary || "Sin síntesis.");
   appendList(content, "Acciones sugeridas", recommendation.proposed_actions || []);
   appendList(content, "Limitaciones", recommendation.limitations || []);
-  for (const [title, analysis] of [["Agente socioeconómico", review.socioeconomic_analysis], ["Agente académico", review.academic_analysis?.analysis]]) {
+  for (const [title, analysis] of [
+    ["Agente financiero", review.socioeconomic_analysis],
+    ["Agente académico", review.academic_analysis?.analysis],
+    ["Agente de bienestar", review.wellbeing_analysis],
+  ]) {
     if (!analysis) continue;
     appendText(content, "h3", title);
     appendText(content, "p", analysis.summary || "Sin análisis.");
@@ -1328,6 +1337,32 @@ function renderAnalysis(review, panelSelector, contentSelector) {
   const sources = review.academic_analysis?.sources || [];
   if (sources.length) appendList(content, "Fuentes recuperadas", sources.map((source) => `${source.title || source.id}${source.section ? ` · ${source.section}` : ""}`));
   if (review.token_usage) renderUsage(content, review.token_usage, review.cost_estimate);
+  if (review.status === "pending_approval" && review.review_id && panelSelector !== "#profile-recommendations") {
+    const actions = document.createElement("div");
+    actions.className = "review-actions";
+    appendText(actions, "p", "La recomendación requiere validación profesional antes de registrar una intervención.", "muted");
+    addActionButton(actions, "Aprobar propuesta", "primary-action", () => submitReviewDecision(review.review_id, "approved"));
+    addActionButton(actions, "Rechazar propuesta", "danger", () => submitReviewDecision(review.review_id, "rejected"));
+    content.append(actions);
+  }
+}
+
+async function submitReviewDecision(reviewId, decision) {
+  const message = decision === "approved"
+    ? "¿Aprobar esta propuesta? La decisión quedará auditada y podrá crear un seguimiento para revisión del equipo."
+    : "¿Rechazar esta propuesta? La decisión quedará auditada y no se creará un seguimiento.";
+  if (!window.confirm(message)) return;
+  try {
+    await api(`/reviews/${encodeURIComponent(reviewId)}/approval`, {
+      method: "POST",
+      body: JSON.stringify({ decision }),
+    });
+    if (selectedStudentId) await loadProfile(selectedStudentId);
+    else await loadStandaloneResult(reviewId);
+    await loadDashboard();
+  } catch (error) {
+    setStatus("#student-list-status", error.message || "No se pudo registrar la decisión del revisor.");
+  }
 }
 
 function appendList(parent, title, values) {
@@ -1566,7 +1601,7 @@ async function exportReviews() {
   const status = document.querySelector("#report-status");
   setStatus("#report-status", "Consultando resultados protegidos…");
   try {
-    const { rows = [] } = await api("/powerbi/reviews");
+    const { rows = [] } = await api("/reports/reviews");
     if (!rows.length) {
       setStatus("#report-status", "No hay resultados para exportar.");
       return;

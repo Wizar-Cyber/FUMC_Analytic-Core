@@ -1,7 +1,9 @@
-# PredictiveModel.md — Modelo Predictivo SAT-FUMC
+# 05.01 | Modelo predictivo SAT-FUMC
 
 > **Estado:** Documento fundacional — Versión 1.0  
 > **Derivado de:** `definicion_del_proyecto_y_prompt_mejorado.md`, `matriz_de_skills_y_herramientas.md`, `diccionario_datos_SAT_desercion_FUMC.xlsx` (hojas: Clasificacion_Variables, No_Predictoras_Criticas, Guia_Modelado, Matriz_Uso_Modelo)
+
+> Las metas de Recall, precisión, F1, AUC, Brier y fairness de este documento son criterios propuestos; no son métricas demostradas por el despliegue Azure ni resultados aprobados del modelo.
 
 ---
 
@@ -26,7 +28,7 @@ target_desercion = 1 ⟺
 
 ## 2. Grupos de Features por Prioridad
 
-### Grupo A — Features Críticas (V1 - Alta prioridad)
+### 2.1 Grupo A — Features críticas (V1)
 *Disponibles desde el inicio del semestre*
 
 | Feature | Descripción | Tipo |
@@ -49,7 +51,7 @@ target_desercion = 1 ⟺
 | `puntaje_matematicas` | Puntaje ICFES matemáticas | Numérica |
 | `puntaje_global_prueba_ingreso` | Puntaje global admisión | Numérica |
 
-### Grupo B — Features de Señal Temprana (Semana 2–4)
+### 2.2 Grupo B — Señales tempranas (semana 2–4)
 *Disponibles solo después del corte correspondiente*
 
 | Feature | Descripción |
@@ -61,7 +63,7 @@ target_desercion = 1 ⟺
 | `num_solicitudes_radicadas` | Solicitudes a registro académico |
 | `tareas_vencidas_semana4` | Tareas no entregadas hasta semana 4 |
 
-### Grupo C — Features de Riesgo Académico (Post-primer corte)
+### 2.3 Grupo C — Riesgo académico (posterior al primer corte)
 *Solo disponibles después del primer corte evaluativo*
 
 | Feature | Descripción |
@@ -70,7 +72,7 @@ target_desercion = 1 ⟺
 | `num_cursos_nota_menor_3` | Cursos con nota < 3.0 en primer corte |
 | `creditos_en_riesgo` | Créditos de asignaturas con calificación < 3.0 |
 
-### Grupo D — Features Derivadas Recomendadas
+### 2.4 Grupo D — Variables derivadas recomendadas
 
 | Feature | Fórmula |
 |---|---|

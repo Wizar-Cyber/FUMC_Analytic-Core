@@ -1,4 +1,4 @@
-# SyntheticDataStrategy.md — Estrategia de Datos Sintéticos (Digital Twin FUMC)
+# 04.01 | Estrategia de datos sintéticos y Digital Twin
 
 > **Estado:** Documento fundacional — Versión 1.0  
 > **Derivado de:** `contexto_fundacion_universitaria_maria_cano.md`, `diccionario_datos_SAT_desercion_FUMC.xlsx` (hojas: README, Diccionario_Datos, Tablas)
@@ -62,21 +62,32 @@ Inicialmente no existen datos reales disponibles para pruebas masivas del SAT-FU
 | `solicitudes_estudiantiles` | 13,849 filas |
 | `target_trazabilidad` | 27,975 filas |
 
-Conteos reproducibles con la semilla actual del generador. El límite de 35,000
-aplica a la tabla principal y su target, no a las tablas auxiliares. Estas filas
-no se envían a los agentes LLM; la app mantiene por separado su límite de
-10,000 evaluaciones. La tabla LMS semanal descrita en versiones anteriores no
-la genera el script actual.
+Conteos del dataset de investigación versionado y comprometido en el repositorio.
+El generador actual también admite corridas mayores bajo demanda. Se completaron
+corridas temporales de 50k y 100k: esta última produjo 552.847 snapshots,
+485.421 targets maduros y 2.394.881 filas de detalle académico. No se entrenó el
+modelo a 50k/100k; no atribuir métricas ML a esos tamaños. La matriz y hashes
+están en [`ScaleExperiments.md`](./ScaleExperiments.md). Estas filas no se envían
+a agentes LLM; la app mantiene por separado su límite de 10.000 evaluaciones.
+La tabla LMS semanal descrita en versiones anteriores no la genera el script
+actual.
 
-## 2.5 Base operativa sintética para la POC multiagente
+### 2.5 Base operativa sintética para la POC multiagente
 
 El libro Excel es el diccionario y contrato de tablas; no contiene filas de
-estudiantes. La Function App crea, al consultar el panel, un subconjunto
-reproducible de **500 estudiantes ficticios** usando las categorías y
-distribuciones del Digital Twin. En Azure Tables se separa en perfiles,
-snapshots `2025-2/SEMANA_4`, señales de asignaturas del primer corte, finanzas,
-bienestar y `target_trazabilidad`. El target permanece aislado y no se consulta
-para construir entradas de agentes.
+estudiantes. La Function App tiene un valor predeterminado de **5.000 estudiantes
+ficticios** (`SYNTHETIC_STUDENT_COUNT`, con máximo de 5.000) si la configuración
+no lo reemplaza. Al primer acceso autenticado al panel puede crear las tablas y
+sembrar perfiles, snapshots `2025-2/SEMANA_4`, señales académicas, finanzas,
+bienestar y `target_trazabilidad` en Azure Tables. Esa inicialización no se
+validó mediante una sesión autenticada al 2026-11-09; el número es el default
+del código, no un conteo observado en Azure.
+
+Este conjunto operativo de la Function App es distinto del dataset tabular de
+investigación de la sección 2.4 (6.000 estudiantes y 27.975 snapshots en la
+última generación medida). No se deben sumar ni presentar ambos como una sola
+población. El target permanece separado y no se consulta para construir entradas
+de agentes.
 
 La interfaz puede pedir explícitamente hasta cinco snapshots pendientes. El
 Durable batch los procesa secuencialmente y guarda cada borrador para revisión
@@ -86,7 +97,7 @@ activo.
 
 ---
 
-## 3. Estrategia de Generación
+## 3. Estrategia de generación
 
 ### Paso 1: Generar Catálogos Maestros
 ```
@@ -122,7 +133,7 @@ catalogos_maestros.parquet
 
 ---
 
-## 4. Librerías y Herramientas
+## 4. Librerías y herramientas
 
 ```python
 # Generación de datos
@@ -154,7 +165,7 @@ El Digital Twin se considera válido si:
 
 ---
 
-## 6. Plan de Transición a Datos Reales
+## 6. Plan de transición a datos reales
 
 Cuando la FUMC provea los datos reales:
 

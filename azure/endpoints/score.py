@@ -21,13 +21,14 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from src.ml.feature_engineering import engineer_features
 
 model = None
-threshold = float(os.getenv("ALERT_THRESHOLD", "0.35"))
+threshold = None
+threshold_override = os.getenv("ALERT_THRESHOLD")
 max_batch_size = int(os.getenv("MAX_BATCH_SIZE", "1000"))
 
 
 def init():
     """Load the registered sklearn model once when the Azure endpoint starts."""
-    global model
+    global model, threshold
     model_dir = Path(os.getenv("AZUREML_MODEL_DIR", "."))
     candidates = [
         model_dir / "sat_fumc_lightgbm.joblib",
@@ -43,6 +44,10 @@ def init():
     model = joblib.load(model_path)
     if not callable(getattr(model, "predict_proba", None)):
         raise TypeError(f"El artefacto {model_path.name} no implementa predict_proba.")
+    calibrated_threshold = getattr(model, "decision_threshold_", 0.35)
+    threshold = float(
+        threshold_override if threshold_override not in (None, "") else calibrated_threshold
+    )
     if not 0 <= threshold <= 1:
         raise ValueError("ALERT_THRESHOLD debe estar entre 0 y 1.")
     if max_batch_size < 1:
@@ -70,6 +75,13 @@ def run(raw_data: Any):
 
     data = engineer_features(pd.DataFrame.from_records(payload["data"]))
     expected_features = list(getattr(model, "feature_names_in_", []))
+    if not expected_features:
+        calibrated_models = getattr(model, "calibrated_classifiers_", [])
+        if calibrated_models:
+            base_estimator = getattr(calibrated_models[0], "estimator", None)
+            expected_features = list(
+                getattr(base_estimator, "feature_names_in_", [])
+            )
     if not expected_features:
         raise ValueError("El modelo no expone feature_names_in_; no se puede validar su contrato.")
     missing_features = [name for name in expected_features if name not in data.columns]

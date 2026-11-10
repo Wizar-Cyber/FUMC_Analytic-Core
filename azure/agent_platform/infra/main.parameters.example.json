@@ -13,6 +13,12 @@
     },
     "reviewerPrincipalIds": {
       "value": "<entra-user-object-id>"
+    },
+    "sqlAdminLogin": {
+      "value": "satadmin"
+    },
+    "sqlAdminPassword": {
+      "value": "<strong-sql-admin-password>"
     }
   }
 }

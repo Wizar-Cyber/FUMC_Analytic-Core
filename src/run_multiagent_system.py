@@ -69,9 +69,9 @@ def main():
     print(f"5. Explicabilidad: {summary['explicabilidad']['intervenciones_urgentes']:,} planes de intervencion asignados.")
     print(f"6. Monitoreo:      Estado de salud -> {summary['monitoreo']['estado_salud_modelo']}")
     print("-" * 50)
-    print("\nArchivos listos para visualizacion en Power BI:")
-    print(f"  -> {Path(args.output_dir) / 'predicciones_multiagente_powerbi.parquet'}")
-    print(f"  -> {Path(args.output_dir) / 'predicciones_multiagente_powerbi.csv'}")
+    print("\nArchivos de predicción consolidados:")
+    print(f"  -> {Path(args.output_dir) / 'predicciones_estudiante_periodo.parquet'}")
+    print(f"  -> {Path(args.output_dir) / 'predicciones_estudiante_periodo.csv'}")
     print(f"  -> {Path(args.output_dir) / 'dashboard_resumen.html'}")
     print(f"  -> {Path(args.output_dir) / 'reporte_ejecucion_multiagente.json'}")
 

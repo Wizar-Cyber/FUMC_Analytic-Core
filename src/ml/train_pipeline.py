@@ -28,7 +28,10 @@ warnings.filterwarnings("ignore")
 # --- Configurar entorno para MLflow y Matplotlib en Windows ---
 os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
 os.environ["MLFLOW_DISABLE_AGENT_HINT"] = "1"
-os.environ["MPLCONFIGDIR"] = str(Path(__file__).parent.parent.parent / "data" / ".mpl")
+os.environ["MPLCONFIGDIR"] = os.environ.get(
+    "MPLCONFIGDIR",
+    str(Path(os.environ.get("SAT_ARTIFACT_DIR", Path(__file__).parents[2])) / "data" / ".mpl"),
+)
 
 # --- MLflow ---
 import mlflow
@@ -60,17 +63,20 @@ sys.path.insert(0, str(BASE_DIR))
 from src.ml.feature_engineering import (
     engineer_features,
     feature_columns,
+    join_mature_targets,
     require_feature_schema,
-    temporal_holdout,
+    temporal_group_train_validation_test_split,
 )
+from src.ml.model_selection import classification_metrics, select_recall_threshold
 from src.agents.agent_ingestion import AgentIngestion
 from src.agents.agent_quality import AgentQuality
 
-DATA_DIR   = BASE_DIR / "data" / "raw"
-PROC_DIR   = BASE_DIR / "data" / "processed"
-PRED_DIR   = BASE_DIR / "data" / "predictions"
-MLRUNS_DIR = BASE_DIR / "mlruns"
-MODELS_DIR = BASE_DIR / "models"
+ARTIFACT_DIR = Path(os.environ.get("SAT_ARTIFACT_DIR", BASE_DIR))
+DATA_DIR   = Path(os.environ.get("SAT_DATA_DIR", BASE_DIR / "data" / "raw"))
+PROC_DIR   = Path(os.environ.get("SAT_PROCESSED_DIR", ARTIFACT_DIR / "data" / "processed"))
+PRED_DIR   = Path(os.environ.get("SAT_PREDICTIONS_DIR", ARTIFACT_DIR / "data" / "predictions"))
+MLRUNS_DIR = Path(os.environ.get("SAT_MLFLOW_DIR", ARTIFACT_DIR / "mlruns"))
+MODELS_DIR = Path(os.environ.get("SAT_MODELS_DIR", ARTIFACT_DIR / "models"))
 
 for d in [PROC_DIR, PRED_DIR, MLRUNS_DIR, MODELS_DIR]:
     d.mkdir(parents=True, exist_ok=True)
@@ -80,7 +86,14 @@ mlflow.set_experiment("SAT_FUMC_Desercion_v1")
 
 RANDOM_STATE = 42
 TARGET_COL   = "target_desercion"
-THRESHOLD    = 0.35   # Optimizado para aumentar Recall (prioridad institucional)
+MINIMUM_RECALL = 0.80
+MAX_ALERT_RATE = (
+    float(os.environ["SAT_MAX_ALERT_RATE"])
+    if os.environ.get("SAT_MAX_ALERT_RATE")
+    else None
+)
+if MAX_ALERT_RATE is not None and not 0 < MAX_ALERT_RATE < 1:
+    raise ValueError("SAT_MAX_ALERT_RATE debe estar entre 0 y 1.")
 
 print("=" * 70)
 print("SAT-FUMC — Pipeline de Machine Learning (Top 2 Modelos: XGBoost y LightGBM)")
@@ -107,11 +120,7 @@ with (PROC_DIR / "data_quality_report.json").open("w", encoding="utf-8") as repo
 print(f"   Tabla principal:  {len(main_df):,} filas x {main_df.shape[1]} cols")
 print(f"   Target:           {len(target_df):,} filas")
 
-df = main_df.merge(
-    target_df[["id_estudiante_anon", "periodo_id", TARGET_COL]],
-    on=["id_estudiante_anon", "periodo_id"],
-    how="inner"
-)
+df = join_mature_targets(main_df, target_df)
 print(f"   Dataset unido:    {len(df):,} filas")
 vc = df[TARGET_COL].value_counts()
 print(f"      Activo (0):    {vc.get(0, 0):,} ({vc.get(0, 0)/len(df):.1%})")
@@ -137,10 +146,34 @@ print("\n[4] Dividiendo train / test por ventana temporal...")
 X = df[ALL_FEATURES].copy()
 y = df[TARGET_COL].copy()
 
-mask_train, mask_test, PERIODOS_TEST = temporal_holdout(df)
+(
+    mask_fit,
+    mask_validation,
+    mask_train,
+    mask_test,
+    PERIODOS_VALIDACION,
+    PERIODOS_TEST,
+) = temporal_group_train_validation_test_split(
+    df,
+    number_of_test_periods=2,
+    number_of_validation_periods=1,
+)
 
 X_train, y_train = X[mask_train], y[mask_train]
 X_test,  y_test  = X[mask_test],  y[mask_test]
+
+X_fit, y_fit = X.loc[mask_fit], y.loc[mask_fit]
+X_validation, y_validation = X.loc[mask_validation], y.loc[mask_validation]
+if (
+    X_fit.empty
+    or X_validation.empty
+    or y_fit.nunique() < 2
+    or y_validation.nunique() < 2
+):
+    raise ValueError(
+        "La calibración temporal interna requiere ambas clases en ajuste y validación. "
+        f"Periodo de validación: {PERIODOS_VALIDACION}."
+    )
 
 print(f"   Entrenamiento (2021-2024): {len(X_train):,} registros")
 print(f"   Evaluación test (2025):     {len(X_test):,} registros")
@@ -220,41 +253,117 @@ for model_name, pipeline in MODELS.items():
             quality["metrics_quality"]["tasa_cumplimiento_calidad"],
         )
         mlflow.log_param("dataset_version", quality["metrics_quality"]["dataset_version"])
-        pipeline.fit(X_train, y_train)
-        
-        y_proba = pipeline.predict_proba(X_test)[:, 1]
-        y_pred  = (y_proba >= THRESHOLD).astype(int)
+        pipeline.fit(X_fit, y_fit)
+        validation_proba = pipeline.predict_proba(X_validation)[:, 1]
+        threshold_selection = select_recall_threshold(
+            y_validation,
+            validation_proba,
+            minimum_recall=MINIMUM_RECALL,
+            max_alert_rate=MAX_ALERT_RATE,
+        )
+        threshold = float(threshold_selection["threshold"])
 
-        f1   = f1_score(y_test, y_pred)
-        rec  = recall_score(y_test, y_pred)
-        prec = precision_score(y_test, y_pred)
+        # Refit on all pre-test observations after the threshold is fixed.
+        pipeline.fit(X_train, y_train)
+        y_proba = pipeline.predict_proba(X_test)[:, 1]
+        y_pred = (y_proba >= threshold).astype(int)
+
+        test_metrics = classification_metrics(y_test, y_proba, threshold)
+        f1 = test_metrics["f1"]
+        rec = test_metrics["recall"]
+        prec = test_metrics["precision"]
         auc  = roc_auc_score(y_test, y_proba)
+        auc_pr = average_precision_score(y_test, y_proba)
         brier = brier_score_loss(y_test, y_proba)
+        alert_rate = float(np.mean(y_pred))
+        tn, fp, fn, tp = confusion_matrix(y_test, y_pred, labels=[0, 1]).ravel()
+        promotion_eligible = bool(
+            MAX_ALERT_RATE is not None
+            and threshold_selection["eligible"]
+            and rec >= MINIMUM_RECALL
+            and alert_rate < 1.0
+            and alert_rate <= MAX_ALERT_RATE
+        )
 
         metrics = {
             "f1": round(f1, 4),
             "recall": round(rec, 4),
             "precision": round(prec, 4),
             "auc_roc": round(auc, 4),
+            "auc_pr": round(auc_pr, 4),
             "brier_score": round(brier, 4),
+            "alert_rate": round(alert_rate, 4),
+            "true_negative": int(tn),
+            "false_positive": int(fp),
+            "false_negative": int(fn),
+            "true_positive": int(tp),
+            "validation_recall": round(float(threshold_selection["recall"]), 4),
+            "decision_threshold": round(threshold, 6),
+            "promotion_eligible": int(promotion_eligible),
         }
         mlflow.log_metrics(metrics)
+        mlflow.log_param("threshold_validation_periods", ",".join(PERIODOS_VALIDACION))
+        mlflow.log_param("threshold_validation_students", int(X_validation["id_estudiante_anon"].nunique()) if "id_estudiante_anon" in X_validation else 0)
+        if MAX_ALERT_RATE is not None:
+            mlflow.log_param("max_alert_rate", MAX_ALERT_RATE)
+        pipeline.decision_threshold_ = threshold
+        pipeline.promotion_eligible_ = promotion_eligible
 
         print(f"      [Metricas] Recall: {rec:.1%} | F1: {f1:.3f} | Precision: {prec:.1%} | AUC-ROC: {auc:.3f}")
         
         model_path = MODELS_DIR / f"model_{model_name}.joblib"
         joblib.dump(pipeline, model_path)
 
-        results[model_name] = {**metrics, "pipeline": pipeline, "y_proba": y_proba, "y_pred": y_pred}
+        results[model_name] = {
+            **metrics,
+            "pipeline": pipeline,
+            "y_proba": y_proba,
+            "y_pred": y_pred,
+            "threshold": threshold,
+            "promotion_eligible": promotion_eligible,
+        }
 
 # Selección del campeón
-champion_name = "XGBoost" if results["XGBoost"]["recall"] >= results["LightGBM"]["recall"] and results["XGBoost"]["f1"] >= results["LightGBM"]["f1"] else "LightGBM"
-if results["LightGBM"]["auc_roc"] > results["XGBoost"]["auc_roc"] + 0.02:
-    champion_name = "LightGBM"
+champion_name = max(
+    results,
+    key=lambda name: (
+        results[name]["promotion_eligible"],
+        results[name]["recall"],
+        results[name]["precision"],
+        results[name]["f1"],
+        results[name]["auc_roc"],
+    ),
+)
 
 champion = results[champion_name]
 print(f"\n   [CAMPEON SELECCIONADO]: {champion_name}")
-joblib.dump(champion["pipeline"], MODELS_DIR / "model_champion.joblib")
+if champion["promotion_eligible"]:
+    joblib.dump(champion["pipeline"], MODELS_DIR / "model_champion.joblib")
+else:
+    print("   [BLOQUEADO]: no se sobrescribe model_champion.joblib.")
+promotion_manifest = {
+    "model": champion_name,
+    "dataset_version": quality["metrics_quality"]["dataset_version"],
+    "test_periods": PERIODOS_TEST,
+    "threshold_validation_periods": PERIODOS_VALIDACION,
+    "threshold": champion["threshold"],
+    "minimum_recall": MINIMUM_RECALL,
+    "max_alert_rate": MAX_ALERT_RATE,
+    "metrics": {
+        key: champion[key]
+        for key in (
+            "recall", "precision", "f1", "auc_roc", "auc_pr", "brier_score",
+            "alert_rate", "validation_recall", "decision_threshold",
+            "true_negative", "false_positive", "false_negative", "true_positive",
+        )
+    },
+    "promotion_eligible": champion["promotion_eligible"],
+    "note": "Synthetic-data experiment; not institutional validation.",
+}
+(PROC_DIR / "model_promotion.json").write_text(
+    json.dumps(promotion_manifest, indent=2, ensure_ascii=False),
+    encoding="utf-8",
+)
 
 # =============================================================================
 # 8. ANÁLISIS DE EQUIDAD Y FAIRNESS
@@ -333,13 +442,13 @@ except Exception as err:
     print(f"   Nota en SHAP: {err}")
 
 # =============================================================================
-# 10. GENERACIÓN DE PREDICCIONES PARA POWER BI
+# 10. GENERACIÓN DE PREDICCIONES CONSOLIDADAS
 # =============================================================================
-print("\n[9] Exportando predicciones completas para visualización en Power BI...")
+print("\n[9] Exportando predicciones consolidadas para consumo de la plataforma...")
 
 X_all = df[ALL_FEATURES].copy()
 y_proba_all = pipe.predict_proba(X_all)[:, 1]
-y_pred_all  = (y_proba_all >= THRESHOLD).astype(int)
+y_pred_all  = (y_proba_all >= champion["threshold"]).astype(int)
 
 intervencion_map = {
     "saldo_mora": "Apoyo socioeconómico — Gestión de créditos/descuentos institucionales",
@@ -386,15 +495,19 @@ for i in range(len(df)):
         "fecha_corte": datetime.now().strftime("%Y-%m-%d")
     })
 
-pbi_df = pd.DataFrame(export_rows)
-pbi_df.to_parquet(PRED_DIR / "predicciones_powerbi.parquet", index=False)
-pbi_df.to_csv(PRED_DIR / "predicciones_powerbi.csv", index=False)
+predictions_df = pd.DataFrame(export_rows)
+predictions_df.to_parquet(PRED_DIR / "predicciones_estudiante_periodo.parquet", index=False)
+predictions_df.to_csv(PRED_DIR / "predicciones_estudiante_periodo.csv", index=False)
 
 print(f"   Predicciones listas:")
-print(f"   -> {PRED_DIR / 'predicciones_powerbi.parquet'} ({len(pbi_df):,} registros)")
-print(f"   -> {PRED_DIR / 'predicciones_powerbi.csv'}")
+print(f"   -> {PRED_DIR / 'predicciones_estudiante_periodo.parquet'} ({len(predictions_df):,} registros)")
+print(f"   -> {PRED_DIR / 'predicciones_estudiante_periodo.csv'}")
 
 print("\n" + "=" * 70)
 print(f"PIPELINE COMPLETADO CON EXITO CON LOS MODELOS MAS POTENTES")
-print(f"Campeon: {champion_name} | Recall: {champion['recall']:.1%} | AUC-ROC: {champion['auc_roc']:.3f}")
+print(
+    f"Campeon: {champion_name} | Recall: {champion['recall']:.1%} "
+    f"| Umbral: {champion['threshold']:.4f} "
+    f"| Promovible: {'sí' if champion['promotion_eligible'] else 'no'}"
+)
 print("=" * 70)

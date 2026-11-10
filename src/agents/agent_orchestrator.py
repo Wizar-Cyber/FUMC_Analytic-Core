@@ -15,7 +15,7 @@ class AgentOrchestrator(BaseAgent):
     Agente Coordinador:
     Orquesta secuencialmente el flujo de trabajo multiagente:
       Ingesta -> Calidad -> Features -> Prediccion -> Explicabilidad -> Monitoreo.
-    Genera el reporte consolidado y exporta los resultados a disco para Power BI y Azure.
+    Genera el reporte consolidado y exporta resultados para consumo de la plataforma.
     """
 
     def __init__(self, model_path: str = "./outputs/sat_fumc_lightgbm.joblib"):
@@ -56,18 +56,18 @@ class AgentOrchestrator(BaseAgent):
         output_dir = Path(inputs.get("output_dir", "./outputs"))
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Guardar dataset para Power BI
+        # Guardar el dataset consolidado para consumo de la plataforma.
         export_cols = [
             "id_estudiante_anon", "periodo_id", "programa", "sede", "jornada", "modalidad",
             "estrato_socioeconomico", "semestres_cursados", "probabilidad_desercion",
             "nivel_riesgo", "alerta_activa", "factor_riesgo_principal", "intervencion_sugerida"
         ]
         available_cols = [c for c in export_cols if c in final_df.columns]
-        pbi_df = final_df[available_cols]
+        predictions_df = final_df[available_cols]
 
-        pbi_df.to_parquet(output_dir / "predicciones_multiagente_powerbi.parquet", index=False)
-        pbi_df.to_csv(output_dir / "predicciones_multiagente_powerbi.csv", index=False)
-        render_dashboard(pbi_df, output_dir / "dashboard_resumen.html")
+        predictions_df.to_parquet(output_dir / "predicciones_estudiante_periodo.parquet", index=False)
+        predictions_df.to_csv(output_dir / "predicciones_estudiante_periodo.csv", index=False)
+        render_dashboard(predictions_df, output_dir / "dashboard_resumen.html")
 
         resumen_ejecucion = {
             "ingesta": self.ingestion.metrics,

@@ -33,12 +33,13 @@ def _public_review(proposal: dict[str, Any]) -> dict[str, Any]:
                 if isinstance(source, dict)
             ],
         },
+        "wellbeing_analysis": proposal.get("wellbeing_analysis", {}),
         "token_usage": proposal.get("token_usage"),
         "cost_estimate": proposal.get("cost_estimate"),
     }
 
 
-def _powerbi_review_row(
+def _review_report_row(
     proposal: dict[str, Any], decision_record: dict[str, Any] | None
 ) -> dict[str, Any]:
     review = _public_review(proposal)
@@ -46,6 +47,7 @@ def _powerbi_review_row(
     socioeconomic = review.get("socioeconomic_analysis") or {}
     academic = review.get("academic_analysis") or {}
     academic_analysis = academic.get("analysis") or {}
+    wellbeing = review.get("wellbeing_analysis") or {}
     token_usage = review.get("token_usage") or {}
     total_usage = token_usage.get("total") or {}
     cost_estimate = review.get("cost_estimate") or {}
@@ -86,6 +88,9 @@ def _powerbi_review_row(
         "observaciones_academicas": text_list(
             academic_analysis.get("observations")
         ),
+        "resumen_bienestar": wellbeing.get("summary", ""),
+        "observaciones_bienestar": text_list(wellbeing.get("observations")),
+        "limitaciones_bienestar": text_list(wellbeing.get("limitations")),
         "limitaciones_academicas": text_list(
             academic_analysis.get("limitations")
         ),
@@ -265,7 +270,7 @@ async def list_reviews(limit: int = 50) -> dict[str, Any]:
     }
 
 
-async def list_powerbi_reviews() -> list[dict[str, Any]]:
+async def list_review_report_rows() -> list[dict[str, Any]]:
     from azure.core.exceptions import ResourceNotFoundError
     from azure.identity.aio import DefaultAzureCredential
     from azure.storage.blob.aio import BlobServiceClient
@@ -300,7 +305,7 @@ async def list_powerbi_reviews() -> list[dict[str, Any]]:
                     decision_record = json.loads(await decision_data.readall())
                 except ResourceNotFoundError:
                     pass
-                rows.append(_powerbi_review_row(proposal, decision_record))
+                rows.append(_review_report_row(proposal, decision_record))
 
     rows.sort(key=lambda row: row.get("fecha_generacion") or "", reverse=True)
     return rows

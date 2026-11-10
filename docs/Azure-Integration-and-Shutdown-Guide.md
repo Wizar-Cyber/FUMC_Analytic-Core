@@ -1,119 +1,106 @@
-# Integración en Azure y guía de deshabilitación del proyecto
+# 12.01 | Integración Azure, verificación y apagado seguro
 
-## 1. Estado real de la integración en Azure
+> **Estado comprobado: 2026-11-09.** Esta guía distingue recursos aprovisionados, respuestas de autenticación y conexiones funcionales. No declara como conectados componentes que solo existen como código.
 
-El proyecto está integrado y desplegado en la suscripción correcta de `reverse05`, con la arquitectura actual operando en modo demo con datos sintéticos y válida para revisión funcional.
+## 1. Estado real del entorno
 
-### Componentes conectados
+El despliegue `satfumc-prod` del grupo `rg-sat-fumc-prod` terminó `Succeeded` en Brazil South. La Function App `satfumcfunc0e83b2486979` está `Running` en Linux con Python 3.11; tras publicar con Core Tools v4 se indexaron 33 funciones.
 
-- Azure Function App: sirve la interfaz web y expone la API de negocio.
-- Azure ML Online Endpoint: recibe el payload del estudiante y devuelve la probabilidad y nivel de riesgo.
-- Azure Tables: almacena registros sintéticos, alertas y seguimientos.
-- Azure Blob Storage: guarda artefactos, archivos y metadatos del entorno.
-- Azure Service Bus: coordina procesos y lotes de análisis.
-- Azure OpenAI: aporta la síntesis LLM y análisis cualitativo del perfil.
-- Microsoft Entra ID: controla acceso autenticado a la interfaz y a la API.
+| Capacidad | Situación observada |
+|---|---|
+| Function App / SPA / API | Paquete publicado; host Running; 33 funciones indexadas |
+| Easy Auth / Entra | Configurado; rutas anónimas devuelven 401 y login AAD devuelve 302 |
+| Tables / Blob | Persistencia utilizada actualmente por la POC de agentes |
+| Service Bus | Namespace y colas de la POC provisionados |
+| Azure OpenAI | Cuenta y deployment `sat-gpt5-mini` provisionados |
+| Azure SQL | Base `SATFUMCOperational` Online; nueve tablas del esquema aplicadas |
+| Azure ML | Hay código y manifiestos, pero la Function App no envía sus casos al endpoint AML; el estado de un endpoint AML independiente no se validó aquí |
+| Inicio autenticado E2E | No completado: no se observó un `200` posterior a login interactivo ni una corrida de agentes autenticada |
 
-### Diagrama funcional
+**Límite importante:** que SQL esté `Online` y tenga tablas no conecta `src/persistence/sql_repository.py` a la app. Functions sigue usando Azure Tables/Blob. La probabilidad de los casos sintéticos de la POC proviene del Digital Twin y no de AML.
+
+## 2. Flujo que sí está desplegado y flujo pendiente
 
 ```mermaid
 flowchart LR
-    U[Usuario autenticado] --> SPA[Function App / Frontend]
-    SPA --> API[API REST / Azure Functions]
-    API --> AML[Azure ML Online Endpoint]
-    API --> T[Azure Tables]
-    API --> B[Blob Storage]
-    API --> SB[Azure Service Bus]
-    SB --> AG[Agentes multiagente]
-    AG --> OAI[Azure OpenAI]
-    AML --> M[Modelo de riesgo]
-    SPA --> E[Microsoft Entra ID]
+    U[Usuario] --> EA[Easy Auth / Entra]
+    EA --> SPA[SPA en Function App]
+    SPA --> API[API de Functions]
+    API --> T[Azure Tables / Blob actual]
+    API --> SB[Service Bus]
+    SB --> AG[Agentes Durable / Semantic Kernel]
+    AG --> AOAI[Azure OpenAI]
+    AML[Azure ML] -. no conectado desde esta POC .-> API
+    SQL[Azure SQL + esquema] -. no usado por Functions .-> API
 ```
 
-### Archivos clave del despliegue
+## 3. Comprobaciones recomendadas
 
-- `azure/agent_platform/function_app.py` — backend de la app y orquestación del flujo.
-- `azure/agent_platform/static/dashboard.js` — frontend y render de perfiles/alertas.
-- `azure/endpoints/score.py` — script de inferencia compatible con Azure ML.
-- `azure/endpoints/deployment.yaml` — despliegue del endpoint online.
-- `azure/environments/online-environment.yaml` — entorno de inferencia.
-- `azure/config.json` — configuración del entorno y despliegue de Azure.
-- `src/ml/train_pipeline.py` — entrenamiento y evaluación del modelo.
-- `docs/CloudDeploymentArchitecture.md` — descripción profesional de la arquitectura.
+### 3.1. Estado ARM y Function App
 
-## 2. Cómo verificar que todo está conectado en Azure
+```powershell
+az deployment group show -g rg-sat-fumc-prod -n satfumc-prod --query properties.provisioningState -o tsv
+az functionapp show -g rg-sat-fumc-prod -n satfumcfunc0e83b2486979 --query state -o tsv
+az functionapp function list -g rg-sat-fumc-prod -n satfumcfunc0e83b2486979 --query "[].name" -o table
+```
 
-Para validar la integración en el portal de Azure:
+### 3.2. Autenticación y rutas HTTP
 
-1. Abrir Azure Portal.
-2. Ir a la suscripción `reverse05`.
-3. Revisar estos recursos:
-   - Function App
-   - Azure Machine Learning workspace
-   - Azure ML Online Endpoint / Deployment
-   - Storage account
-   - Service Bus namespace
-   - Application Insights (si está habilitado)
-4. En la Function App revisar:
-   - App Settings
-   - variables de entorno como `AZURE_ML_ENDPOINT_URL`, `AZURE_ML_ENDPOINT_KEY`, `AZURE_ML_DEPLOYMENT_NAME`
-   - `DATA_MODE=synthetic`
-5. En Azure ML revisar:
-   - que el endpoint está en estado `Healthy` o `Succeeded`
-   - que el deployment tiene un runtime operativo
-   - que la llamada HTTP devuelve respuesta válida
-6. En la UI revisar:
-   - autenticación Entra funcionando,
-   - carga de perfiles sintéticos,
-   - dashboard con estudiantes visibles,
-   - análisis y síntesis generada con el flujo real.
+En una sesión no autenticada, `GET /` y `GET /api/poc/status` respondieron `401`. `GET /.auth/login/aad` redirigió (`302`) a Microsoft. El `401` anónimo es esperado por la política de acceso, pero **no demuestra** que la autenticación interactiva, el callback y los permisos del revisor estén bien hasta obtener un `200` con un usuario de prueba autorizado.
 
-## 3. Cómo deshabilitar o pausar el proyecto para evitar costos
+Después de iniciar sesión, comprobar desde navegador:
 
-### Opción recomendada: pausa segura
+1. La SPA carga y no utiliza datos locales de fallback.
+2. `GET /api/poc/status` devuelve JSON válido al revisor autorizado.
+3. La identidad aparece en `CASE_REVIEWER_ALLOWED_PRINCIPAL_IDS`.
+4. Una consulta de solo lectura valida acceso a Tables/Blob sin iniciar inferencia ni consumir tokens.
 
-Si quieres parar costos sin borrar la infraestructura:
+No registrar cookies, cabeceras `Authorization`, tokens o secretos al hacer estas pruebas.
 
-1. En Azure Portal, entrar a la Function App.
-2. Hacer `Stop` y dejarla detenida.
-3. En Azure ML, detener o pausar el deployment del endpoint online.
-4. Revisar Storage y Service Bus y dejar solo lo necesario.
-5. Si no vas a usar la app por un tiempo, también puedes desactivar los recursos auxiliares del proceso.
+### 3.3. SQL y Azure ML
 
-### Opción más agresiva: eliminar el entorno
+```powershell
+az sql db show -g rg-sat-fumc-prod -s satfumc-sql-nfatitnqjp572 -n SATFUMCOperational --query "{status:status,sku:sku.name}" -o json
+```
 
-Si quieres dejarlo completamente apagado:
+La presencia del esquema SQL debe verificarse por catálogo desde una sesión de base autorizada. Para AML, verificar la existencia/estado del recurso por separado; no inferir que está conectado a la POC a partir de YAML o de un deployment registrado.
 
-1. Eliminar el deployment del endpoint de Azure ML.
-2. Eliminar el endpoint online si ya no se usará.
-3. Eliminar o detener la Function App.
-4. Revisar si el Storage y Service Bus ya no son necesarios y deshabilitarlos o eliminarlos según el caso.
+## 4. Pausa y reducción de costos
 
-### Lo importante para no pagar innecesariamente
+### 4.1. Pausa temporal de la app
 
-- No dejar Azure ML endpoint funcionando sin uso.
-- No dejar la Function App en modo siempre activo si no va a recibir tráfico.
-- Revisar costos de OpenAI / Azure AI si se usan modelos de inferencia o análisis complemento.
-- Mantener solo los recursos mínimos que respaldan la demo o la validación funcional.
+El endpoint `POST /api/poc/state` permite pausar nuevos trabajos, pero requiere sesión y revisor autorizados; no borra recursos. También puede detenerse la Function App:
 
-## 4. Cómo volverlo a levantar después
+```powershell
+az functionapp stop -g rg-sat-fumc-prod -n satfumcfunc0e83b2486979
+```
 
-Cuando quieras reactivar la solución:
+Detener Functions no pausa ni elimina SQL, Storage, Service Bus, Azure OpenAI, Key Vault o monitorización. Revisa Cost Management por recurso; los costos pueden continuar.
 
-1. Iniciar la Function App.
-2. Verificar que las app settings siguen presentes.
-3. Validar Azure ML endpoint y deployment.
-4. Confirmar que el `DATA_MODE` sigue en `synthetic`.
-5. Probar la UI conectada.
-6. Hacer una llamada de prueba real al endpoint y confirmar respuesta 200.
+### 4.2. Eliminación completa
 
-## 5. Recomendación operacional final
+Eliminar el grupo de recursos borra de forma irreversible la aplicación, la base SQL, el almacenamiento, las colas, las claves/secretos y la telemetría asociados. Antes de hacerlo:
 
-Para el proyecto actual, la forma más segura y limpia de controlar costos es:
+1. Confirma la suscripción y el grupo con el propietario del proyecto.
+2. Exporta únicamente los datos sintéticos, logs y artefactos que deban conservarse.
+3. Asegura que la contraseña SQL y los secretos ya rotados no sean requeridos por otra aplicación.
+4. Verifica que no haya información institucional autorizada ni evidencia que deba preservarse.
+5. Solicita aprobación explícita para la eliminación.
 
-- dejar la solución en `Stop` o con Azure ML deployment pausado cuando no se vaya a usar,
-- conservar la documentación y el código del proyecto,
-- mantener la infraestructura solo para pruebas de validación y demostración,
-- evitar tocar la cuenta educativa y continuar usando la suscripción `reverse05` únicamente.
+No automatizar `az group delete` en una tarea genérica ni usarlo como primera medida de control de costos.
 
-Esto permite conservar la plataforma operativa, evitar costos innecesarios y volver a activarla rápida y reproduciblemente cuando haga falta.
+## 5. Reactivación y validación posterior
+
+1. Inicia la Function App con `az functionapp start`.
+2. Revisa estado del host y que Azure tenga las funciones indexadas.
+3. Confirma runtime Python 3.11, configuración `DATA_MODE=synthetic` y referencias Key Vault sin mostrar valores.
+4. Repite el login Entra con una cuenta autorizada; confirma `200` en el endpoint de solo lectura.
+5. Solo después, ejecuta una acción sintética acotada y verifica logs, identidad administrada, Service Bus y persistencia Tables/Blob.
+6. No consideres validada la integración AML/SQL hasta probarla desde Functions con contratos y datos sintéticos.
+
+## 6. Referencias operativas
+
+- [`CloudDeploymentArchitecture.md`](./CloudDeploymentArchitecture.md) — inventario/evidencia de recursos.
+- [`ProductionArchitecture.md`](./ProductionArchitecture.md) — arquitectura objetivo y brechas.
+- [`ProductionReadiness.md`](./ProductionReadiness.md) — gates antes de producción.
+- [`azure/agent_platform/infra/README.md`](../azure/agent_platform/infra/README.md) — Bicep, esquema SQL y publicación de Functions.

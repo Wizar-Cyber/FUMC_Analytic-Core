@@ -6,8 +6,10 @@ import json
 import logging
 import os
 import re
+import sys
 import urllib.request
 import uuid
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -15,9 +17,24 @@ from typing import Any
 import azure.durable_functions as df
 import azure.functions as func
 
+_FUNCTION_ROOT = Path(__file__).resolve().parent
+REPO_ROOT = next(
+    (
+        candidate
+        for candidate in Path(__file__).resolve().parents
+        if (candidate / "src" / "ml" / "feedback_loop.py").is_file()
+    ),
+    _FUNCTION_ROOT,
+)
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from src.ml.feedback_loop import append_feedback_event, summarize_feedback
+
 from sat_agents.agents import (
     analyze_academic,
     analyze_socioeconomic,
+    analyze_wellbeing,
     synthesize_recommendation,
 )
 from sat_agents.contracts import (
@@ -30,7 +47,7 @@ from sat_agents.reviews import record_approval, save_pending_review
 from sat_agents.reviews import (
     _public_review,
     get_review,
-    list_powerbi_reviews,
+    list_review_report_rows,
     list_reviews,
 )
 from sat_agents.pilot_limits import (
@@ -99,9 +116,11 @@ def _call_azure_ml_endpoint(payload: dict[str, Any]) -> tuple[int, str]:
 
 _QUEUE_SOCIOECONOMIC = "socioeconomic-analysis"
 _QUEUE_ACADEMIC = "academic-analysis"
+_QUEUE_WELLBEING = "wellbeing-analysis"
 _QUEUE_RESULTS = "agent-results"
 _REVIEW_ID = re.compile(r"^[A-Za-z0-9_-]{1,100}$")
 _MAX_HTTP_BODY_BYTES = 16_384
+_MAX_MODEL_REQUEST_BYTES = 1_048_576
 _STATIC_DIR = Path(__file__).parent / "static"
 _STATIC_ASSETS = {
     "dashboard.js": "text/javascript; charset=utf-8",
@@ -142,6 +161,15 @@ def _static_response(filename: str) -> func.HttpResponse:
 @app.route(route="api/ml/predict", methods=["POST"])
 def predict_with_azure_ml(req: func.HttpRequest) -> func.HttpResponse:
     try:
+        _require_synthetic_mode()
+    except RuntimeError as error:
+        return func.HttpResponse(str(error), status_code=503)
+    _, auth_error = _authorize_reviewer(req)
+    if auth_error:
+        return auth_error
+    if len(req.get_body()) > _MAX_MODEL_REQUEST_BYTES:
+        return func.HttpResponse("El cuerpo excede el límite de 1 MB.", status_code=413)
+    try:
         body = req.get_json()
     except ValueError:
         return func.HttpResponse(
@@ -163,7 +191,7 @@ def predict_with_azure_ml(req: func.HttpRequest) -> func.HttpResponse:
     except Exception as error:
         logger.exception("Error al invocar el endpoint de Azure ML.")
         return func.HttpResponse(
-            json.dumps({"error": str(error)}, ensure_ascii=False),
+            json.dumps({"error": "No se pudo completar la inferencia."}, ensure_ascii=False),
             status_code=500,
             mimetype="application/json",
         )
@@ -256,6 +284,90 @@ async def get_poc_status(req: func.HttpRequest) -> func.HttpResponse:
             },
             ensure_ascii=False,
         ),
+        status_code=200,
+        mimetype="application/json",
+    )
+
+
+@app.route(route="api/model/feedback", methods=["POST"])
+def submit_model_feedback(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        _require_synthetic_mode()
+    except RuntimeError as error:
+        return func.HttpResponse(str(error), status_code=503)
+    reviewer_id, auth_error = _authorize_reviewer(req)
+    if auth_error:
+        return auth_error
+    if len(req.get_body()) > _MAX_HTTP_BODY_BYTES:
+        return func.HttpResponse("El cuerpo excede el límite de 16 KB.", status_code=413)
+    try:
+        payload = req.get_json()
+    except ValueError:
+        return func.HttpResponse(
+            json.dumps({"error": "El cuerpo debe ser JSON válido."}, ensure_ascii=False),
+            status_code=400,
+            mimetype="application/json",
+        )
+
+    if not isinstance(payload, dict):
+        return func.HttpResponse(
+            json.dumps({"error": "Se espera un JSON con la revisión del modelo."}, ensure_ascii=False),
+            status_code=400,
+            mimetype="application/json",
+        )
+
+    if not isinstance(payload.get("student_id"), str) or not payload["student_id"].startswith("ST-SYN-"):
+        return func.HttpResponse(
+            json.dumps({"error": "Solo se acepta feedback de casos sintéticos."}, ensure_ascii=False),
+            status_code=400,
+            mimetype="application/json",
+        )
+    payload["reviewer_id"] = reviewer_id
+
+    try:
+        event = append_feedback_event(payload)
+    except ValueError as error:
+        return func.HttpResponse(
+            json.dumps({"error": str(error)}, ensure_ascii=False),
+            status_code=400,
+            mimetype="application/json",
+        )
+    except Exception as error:  # pragma: no cover - safety net for runtime envs
+        logger.exception("No se pudo registrar el feedback del modelo.")
+        return func.HttpResponse(
+            json.dumps({"error": str(error)}, ensure_ascii=False),
+            status_code=500,
+            mimetype="application/json",
+        )
+
+    return func.HttpResponse(
+        json.dumps({"status": "ok", "event": event}, ensure_ascii=False),
+        status_code=200,
+        mimetype="application/json",
+    )
+
+
+@app.route(route="api/model/feedback", methods=["GET"])
+def list_model_feedback(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        _require_synthetic_mode()
+    except RuntimeError as error:
+        return func.HttpResponse(str(error), status_code=503)
+    _, auth_error = _authorize_reviewer(req)
+    if auth_error:
+        return auth_error
+    try:
+        summary = summarize_feedback()
+    except Exception as error:  # pragma: no cover - safety net for runtime envs
+        logger.exception("No se pudo consultar el feedback del modelo.")
+        return func.HttpResponse(
+            json.dumps({"error": str(error)}, ensure_ascii=False),
+            status_code=500,
+            mimetype="application/json",
+        )
+
+    return func.HttpResponse(
+        json.dumps(summary, ensure_ascii=False),
         status_code=200,
         mimetype="application/json",
     )
@@ -530,14 +642,18 @@ async def get_synthetic_student_api(req: func.HttpRequest) -> func.HttpResponse:
     if review_id:
         try:
             proposal, decision_record = await get_review(review_id)
+            public_review = _public_review(proposal)
+            decision = (
+                decision_record.get("approval")
+                if isinstance(decision_record, dict)
+                else None
+            )
+            if isinstance(decision, dict) and decision.get("decision"):
+                public_review["status"] = decision["decision"]
             result["analysis_result"] = {
-                "review": _public_review(proposal),
-                "status": proposal.get("status"),
-                "decision": (
-                    decision_record.get("approval")
-                    if isinstance(decision_record, dict)
-                    else None
-                ),
+                "review": public_review,
+                "status": public_review.get("status"),
+                "decision": decision,
             }
         except LookupError:
             result["human_review"] = None
@@ -787,6 +903,7 @@ def analysis_orchestrator(context: df.DurableOrchestrationContext):
             [
                 context.wait_for_external_event("socioeconomic_result"),
                 context.wait_for_external_event("academic_result"),
+                context.wait_for_external_event("wellbeing_result"),
             ]
         )
         timeout_task = context.create_timer(
@@ -796,7 +913,7 @@ def analysis_orchestrator(context: df.DurableOrchestrationContext):
         if not result_tasks.is_completed:
             raise TimeoutError("Los agentes no respondieron dentro de 15 minutos.")
         timeout_task.cancel()
-        socioeconomic, academic = yield result_tasks
+        socioeconomic, academic, wellbeing = yield result_tasks
 
         return (
             yield context.call_activity(
@@ -806,6 +923,7 @@ def analysis_orchestrator(context: df.DurableOrchestrationContext):
                     "case": case,
                     "socioeconomic": socioeconomic,
                     "academic": academic,
+                    "wellbeing": wellbeing,
                 },
             )
         )
@@ -892,6 +1010,11 @@ async def dispatch_agents(data: dict) -> dict[str, bool]:
             {"instance_id": instance_id, "case": case},
             f"{instance_id}:academic",
         ),
+        _send_queue_message(
+            _QUEUE_WELLBEING,
+            {"instance_id": instance_id, "case": case},
+            f"{instance_id}:wellbeing",
+        ),
     )
     return {"dispatched": True}
 
@@ -953,6 +1076,26 @@ async def academic_worker(message: func.ServiceBusMessage) -> None:
 
 @app.service_bus_queue_trigger(
     arg_name="message",
+    queue_name=_QUEUE_WELLBEING,
+    connection="ServiceBusConnection",
+)
+async def wellbeing_worker(message: func.ServiceBusMessage) -> None:
+    _require_synthetic_mode()
+    payload = _decode_message(message)
+    result = await analyze_wellbeing(payload["case"])
+    await _send_queue_message(
+        _QUEUE_RESULTS,
+        {
+            "instance_id": payload["instance_id"],
+            "agent": "wellbeing",
+            "result": result,
+        },
+        f"{payload['instance_id']}:wellbeing:result",
+    )
+
+
+@app.service_bus_queue_trigger(
+    arg_name="message",
     queue_name=_QUEUE_RESULTS,
     connection="ServiceBusConnection",
 )
@@ -965,7 +1108,7 @@ async def collect_agent_result(
     payload = _decode_message(message)
     agent = payload.get("agent")
     instance_id = payload.get("instance_id")
-    if agent not in {"socioeconomic", "academic"}:
+    if agent not in {"socioeconomic", "academic", "wellbeing"}:
         raise ContractError("El resultado tiene un agente desconocido.")
     if not isinstance(instance_id, str) or not _REVIEW_ID.fullmatch(instance_id):
         raise ContractError("El resultado no contiene un instance_id válido.")
@@ -983,19 +1126,22 @@ async def create_pending_review(data: dict) -> dict[str, Any]:
     case = AnalysisCase.from_dict(data["case"])
     socioeconomic = data["socioeconomic"]
     academic = data["academic"]
+    wellbeing = data["wellbeing"]
     synthesis = await synthesize_recommendation(
         case.model_probability,
         socioeconomic["analysis"],
         academic,
+        wellbeing["analysis"],
     )
     recommendation = synthesis["recommendation"]
-    recommendation["human_review_required"] = False
+    recommendation["human_review_required"] = True
     recommendation["automated_decision"] = False
-    recommendation["display_status"] = "generated_demo"
+    recommendation["display_status"] = "pending_human_review"
     usage_report = build_usage_report(
         socioeconomic["token_usage"],
         academic["token_usage"],
         synthesis["token_usage"],
+        wellbeing=wellbeing["token_usage"],
     )
     proposal = {
         "review_id": data["review_id"],
@@ -1004,7 +1150,7 @@ async def create_pending_review(data: dict) -> dict[str, Any]:
             if re.fullmatch(r"syn-st-syn-\d{6}", case.case_id, re.IGNORECASE)
             else None
         ),
-        "status": "generated",
+        "status": "pending_approval",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "model_probability": case.model_probability,
         "recommendation": recommendation,
@@ -1013,6 +1159,7 @@ async def create_pending_review(data: dict) -> dict[str, Any]:
             "analysis": academic["analysis"],
             "sources": academic["sources"],
         },
+        "wellbeing_analysis": wellbeing["analysis"],
         "token_usage": {
             "calls": usage_report["calls"],
             "total": usage_report["total"],
@@ -1198,10 +1345,8 @@ async def get_reviews(req: func.HttpRequest) -> func.HttpResponse:
     )
 
 
-@app.route(
-    route="api/powerbi/reviews", methods=["GET"]
-)
-async def get_powerbi_reviews(req: func.HttpRequest) -> func.HttpResponse:
+@app.route(route="api/reports/reviews", methods=["GET"])
+async def get_review_report_rows_api(req: func.HttpRequest) -> func.HttpResponse:
     request = req
     if os.environ.get("DATA_MODE") != "synthetic":
         return func.HttpResponse(
@@ -1211,12 +1356,12 @@ async def get_powerbi_reviews(req: func.HttpRequest) -> func.HttpResponse:
     if auth_error:
         return auth_error
     try:
-        rows = await list_powerbi_reviews()
+        rows = await list_review_report_rows()
     except RuntimeError as error:
         return func.HttpResponse(str(error), status_code=503)
     except Exception:
         return func.HttpResponse(
-            "No se pudieron consultar los resultados LLM para Power BI.",
+            "No se pudieron consultar los resultados para el reporte.",
             status_code=503,
         )
     return func.HttpResponse(
@@ -1249,12 +1394,12 @@ async def get_review_detail(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(
             "No se pudo cargar la propuesta de revisión.", status_code=503
         )
-    result = {
-        "review": _public_review(proposal),
-        "decision": None,
-    }
+    public_review = _public_review(proposal)
+    result = {"review": public_review, "decision": None}
     if isinstance(decision_record, dict):
         approval = decision_record.get("approval", {})
+        if approval.get("decision"):
+            public_review["status"] = approval["decision"]
         result["decision"] = {
             "decision": approval.get("decision"),
             "approved_action": approval.get("approved_action"),

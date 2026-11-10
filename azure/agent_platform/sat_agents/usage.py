@@ -12,10 +12,13 @@ def build_usage_report(
     socioeconomic: dict[str, int],
     academic: dict[str, int],
     synthesis: dict[str, int],
+    *,
+    wellbeing: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     calls = {
         "socioeconomic": _validated_usage(socioeconomic),
         "academic": _validated_usage(academic),
+        **({"wellbeing": _validated_usage(wellbeing)} if wellbeing is not None else {}),
         "synthesis": _validated_usage(synthesis),
     }
     total = {

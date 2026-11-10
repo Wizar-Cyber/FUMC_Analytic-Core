@@ -23,4 +23,4 @@ environment:
 compute: azureml:cpu-cluster
 display_name: sat-fumc-multiagent-scoring
 experiment_name: SAT-FUMC-Desercion-Scoring
-description: Flujo multiagente para validar, puntuar, recomendar intervenciones y generar salidas Power BI.
+description: Flujo multiagente para validar, puntuar, recomendar revisiones y generar salidas de la plataforma.

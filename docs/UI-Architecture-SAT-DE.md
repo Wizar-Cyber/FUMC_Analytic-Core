@@ -1,88 +1,45 @@
-# Arquitectura de la Interfaz Gráfica: SAT-DE (FUMC Analytics Core)
+# 09.01 | Interfaz web del SAT-FUMC
 
-## 1. Requisitos funcionales de la interfaz
+> La SPA autenticada es el punto único de acceso operativo. La arquitectura canónica, estado y limitaciones están en [`ProductionArchitecture.md`](./ProductionArchitecture.md).
 
-La interfaz se diseñó para soportar la operación del sistema de permanencia estudiantil con el siguiente enfoque funcional:
+## 1. Navegación
 
-- filtros globales por sede, programa, modalidad, semestre, nivel de riesgo y estado de intervención,
-- dashboard ejecutivo con indicadores clave de riesgo y cobertura,
-- vista operativa para priorizar estudiantes con mayor urgencia,
-- ficha individual con diagnóstico académico, financiero y socioeconómico,
-- síntesis del análisis con recomendaciones accionables y límites explicados,
-- gestión de alertas y seguimientos sobre registros sintéticos y sin ejecución de intervenciones externas.
+- **Dashboard:** cobertura del corte, distribución de riesgo, alertas abiertas, seguimientos y actividad reciente. Toda métrica muestra periodo y fuente.
+- **Estudiantes:** búsqueda/paginación de registros autorizados, filtros y estado de revisión. No se muestran expedientes locales de fallback cuando la API falla.
+- **Ficha:** señales académicas, financieras, de bienestar y LMS disponibles al corte; score del modelo con versión/umbral; factores y origen de datos.
+- **Análisis:** resúmenes separados por agente, evidencia/citas disponibles, limitaciones, uso del LLM y propuestas estructuradas.
+- **Alertas y seguimiento:** registro de tareas después de una decisión humana, con actor, fecha y estado.
+- **Revisión:** aprobar o rechazar propuestas pendientes. La decisión queda auditada; no se envían mensajes ni se ejecutan intervenciones automáticamente.
+- **Reportes:** descarga CSV controlada desde la API de la misma plataforma.
 
-La propuesta visual prioriza claridad operativa, trazabilidad y comparación entre perfiles, manteniendo la demo dentro del contexto sintético validado para la arquitectura actual.
+## 2. Principios de interacción
 
----
+1. La SPA no inventa datos cuando el API responde error; muestra un estado de indisponibilidad.
+2. El score se presenta como probabilidad estimada, separado del texto generativo; no se presenta como diagnóstico ni causa.
+3. Cada resultado muestra si es sintético o institucional, el corte, la versión y sus limitaciones.
+4. Los controles de revisión y exportación requieren Entra ID y la allowlist institucional.
+5. No se muestran nombres, documentos ni cifras de ejemplo como si fueran datos reales.
+6. El LLM configurado en la POC es GPT-5-mini; genera propuestas para revisión humana.
 
-## 2. Arquitectura Gráfica de la Interfaz (Estructura de Pantallas)
+## 3. Estado y límite de verificación
 
-### Layout General y Estilo Visual
-* **Paleta de Colores:** Basada en la identidad de la universidad (Azul institucional de la María Cano como color primario, gris azulado para fondos/tarjetas, y semáforo de riesgo: Rojo `#EF4444` para Alto, Amarillo `#F59E0B` para Medio, Verde `#10B981` para Bajo).
-* **Barra Superior:** Buscador general de estudiante (por ID/Nombre), selector de Sede y botón de actualización de sincronización con Azure Data Lake / Parquet.
+La Function App publicó la SPA y Azure indexó la función que sirve su contenido. Easy Auth está configurado: solicitudes anónimas a `/` respondieron `401` y `/.auth/login/aad` redirigió (`302`) a Microsoft. No se terminó un login interactivo ni se verificó la carga de la SPA/API con una respuesta autenticada `200`.
 
----
+La POC opera contra datos sintéticos en Azure Tables/Blob. Azure SQL está provisionado y con esquema aplicado, pero la SPA/API aún no usa ese repositorio. Tampoco se conecta el snapshot de agentes al endpoint Azure ML. Los estados `Running` del host y `401` de una solicitud anónima no deben confundirse con disponibilidad de producción o con éxito de una sesión autorizada.
 
-### Dashboard Principal: Centro de Control de Deserción
+## 4. Origen de la información presentada
 
-```
-+------------------------------------------------------------------------------------------------+
-|  [Filtro: Sede ▼]  [Filtro: Programa ▼]  [Filtro: Modalidad ▼]  [Filtro: Nivel Riesgo ▼]      |
-+------------------------------------------------------------------------------------------------+
-|  [ KPI: Total Estudiantes ]   [ KPI: En Riesgo Alto ]   [ KPI: Cobertura TQU ]  [ Eficacia ML ]|
-|          5,000                       412 (8.2%)               310 (75%)            91.4%     |
-+----------------------------------------------------+-------------------------------------------+
-|  Mapa de Riesgo por Sede y Programa                |  Factores Desencadenantes de Riesgo       |
-|  (Gráfico de Barras Apiladas)                      |  (Gráfico de Rosca / Donut Chart)         |
-|  - Medellín: 210 Alto                              |  - Bajo Promedio / Pérdida Materia (45%)  |
-|  - Cali:      85 Alto                              |  - Mora en Matrícula / Pago (30%)         |
-|  - Neiva:     42 Alto                              |  - Inactividad en Plataforma (15%)        |
-|  - Popayán:   75 Alto                              |  - Inasistencia Continuada (10%)          |
-+----------------------------------------------------+-------------------------------------------+
-```
+| Área visible | Origen actual | ¿GPT? |
+|---|---|---|
+| Conteo de estudiantes, niveles/probabilidades y filtros | Digital Twin sintético en Azure Tables | No; el score se genera en el Digital Twin, no lo produce el LLM |
+| Distribución por sede/programa/facultad y matriz de riesgo | Agregaciones calculadas por la API sobre el snapshot sintético | No |
+| Tendencia histórica | Filas explícitamente sembradas como `simulated-history` | No; es una tendencia simulada |
+| Alertas iniciales | Regla sintética de riesgo alto/crítico | No. No deben titularse “generadas por IA” |
+| Seguimientos iniciales | Registros sembrados de demostración en Tables | No |
+| Resultados recientes, síntesis y análisis por agente | Propuestas `pending_approval` / `generated` leídas de Blob | Sí; solo tras ejecución de un lote de agentes |
 
----
+## 5. Condición para mostrar resultados GPT
 
-### Módulo Operativo: Listado y Matriz de Estudiantes
-Esta vista permite a los coordinadores filtrar y priorizar rápidamente a los estudiantes que requieren atención inmediata.
+La carga inicial/refresco del dashboard solo consulta APIs y agregados; **no llama GPT**. Para crear resultados, el revisor debe completar login Entra, estar en la allowlist, tener la POC habilitada y casos pendientes, luego iniciar y confirmar un lote. `POST /api/batches` procesa como máximo cinco casos pendientes (los más antiguos; no necesariamente el perfil abierto). Durable Functions envía mensajes a Service Bus; los tres workers consultan Azure OpenAI y el sintetizador guarda la propuesta en Blob. Al terminar el lote, la SPA vuelve a consultar el dashboard y lista las propuestas guardadas.
 
-| ID Estudiante | Programa | Sede | Semestre | Prom. Acum. | Asistencia | Mora (Días) | Score Riesgo | Diagnóstico Predominante | Acción |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| **EST-00412** | Ing. de Software | Medellín | 4.° | 2.1 | 62% | 45 días | 88% (ALTO) | Académico + Financiero | [Ver Expediente] |
-| **EST-01205** | Fisioterapia | Cali | 2.° | 3.2 | 80% | 60 días | 64% (MEDIO) | Mora Financiera | [Ver Expediente] |
-| **EST-00891** | Administración | Virtual | 1.° | 4.1 | 95% | 0 días | 12% (BAJO) | Estable | [Ver Expediente] |
-
----
-
-### Ficha Interactiva del Estudiante (Desglose Multi-Agente)
-Al hacer clic en **[Ver Expediente]**, se despliega una modal o vista detallada con los hallazgos de cada sub-agente:
-
-```
-====================================================================================================
-EXPEDIENTE DE EVALUACIÓN PREDICTIVA: EST-00412 | Ingeniería de Software (Sede Medellín)
-====================================================================================================
-[ PANEL DE HISTORIAL ACADÉMICO ]          [ PANEL SOCIOECONÓMICO Y ACCESIBILIDAD ]
-- Promedio General: 2.1 / 5.0             - Estrato Socioeconómico: 1
-- Materias Reprobadas: 3 (Estructuras)    - Días de Mora en Pago: 45 Días
-- Asistencia Global: 62%                  - Apoyo "Te Quiero en la U": NO REGISTRA
-- Horas Plataforma: 12 hrs/mes            - Becas/Auxilios: Ninguno Activo
-----------------------------------------------------------------------------------------------------
-🤖 SÍNTESIS Y DIAGNÓSTICO DEL AGENTE PREDICTIVO (Azure OpenAI GPT-4o mini)
-----------------------------------------------------------------------------------------------------
-"El estudiante presenta una probabilidad de deserción del 88%. El factor crítico reside en el 
-bajo rendimiento en asignaturas filtro de 4.° semestre (Estructura de Datos), sumado a una 
-inactividad prolongada en la plataforma LMS y un atraso de 45 días en el pago del crédito. 
-La falta de participación en el programa TQU incrementa la vulnerabilidad de abandono."
-----------------------------------------------------------------------------------------------------
-🛠️ PLAN DE ACCIÓN SUGERIDO POR EL AGENTE (Human-in-the-Loop)
-----------------------------------------------------------------------------------------------------
-1. [ ] Asignación de Tutoría Par en Algoritmos y Estructura de Datos.
-2. [ ] Remisión a Bienestar Universitario para evaluación de Beca/Auxilio Financiero de Emergencia.
-3. [ ] Entrevista presencial o virtual con Psicología Académica.
-----------------------------------------------------------------------------------------------------
-✍️ DECISIÓN DEL EVALUADOR HUMANO (Coordinador / Bienestar)
-----------------------------------------------------------------------------------------------------
-Estado: [ Aprobado con Modificaciones  ▼ ]
-Notas del Evaluador: "Se aprueba tutoría y auxilio. Se agenda cita prioritaria para el lunes."
-[ GUARDAR E INICIAR RUTINA DE CONTACTO (Teams / Mail) ]
-```
+Si no hay casos pendientes, la POC está pausada o el usuario no está autenticado, **Actualizar** solo refresca datos o no puede ejecutar el lote. Al 2026-11-09 el acceso anónimo devolvía `401`, no se completó el login interactivo ni un `200` autenticado, y Application Insights devolvió cero requests y cero dependencies en la consulta de los últimos 14 días. Por tanto no existe evidencia de una corrida GPT exitosa en Azure en esa ventana.

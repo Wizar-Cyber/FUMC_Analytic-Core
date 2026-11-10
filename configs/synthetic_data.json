@@ -1,0 +1,26 @@
+{
+  "generator_version": "2.0.0",
+  "students": 30000,
+  "seed": 42,
+  "start_period": "2021-1",
+  "period_count": 10,
+  "outcome_followup_periods": 2,
+  "cohort_start_periods": 4,
+  "max_snapshot_rows": 1000000,
+  "scenario": "baseline",
+  "scenarios": {
+    "low_prevalence": {"hazard_multiplier": 0.6},
+    "baseline": {"hazard_multiplier": 1.0},
+    "high_prevalence": {"hazard_multiplier": 1.5}
+  },
+  "target": {
+    "name": "dropout_within_next_two_periods",
+    "horizon_periods": 2,
+    "observation_cut": "CIERRE",
+    "definition": "Deserción simulada después del corte T y dentro de T+1/T+2; excluye graduación, transferencia y aplazamiento formal. Etiquetas sin ventana completa se marcan inmaduras."
+  },
+  "intervention_effectiveness": {
+    "academic_support_grade_delta": 0.12,
+    "followup_hazard_multiplier": 0.88
+  }
+}
