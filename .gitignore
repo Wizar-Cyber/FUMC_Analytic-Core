@@ -12,6 +12,7 @@ __pycache__/
 *.pptx
 *.zip
 *.log
+*.vscode/
 local.settings.json
 
 # Datos/experimentos generados o con posible contenido sensible
@@ -22,9 +23,9 @@ Documentos/
 outputs/poc_20261105_0404/
 
 # Artículo canónico y entregables asociados: se mantienen versionables
-!articulo_trabajo_grado.md
-!articulo_trabajo_grado.docx
-!entregables/
+articulo_trabajo_grado.md
+articulo_trabajo_grado.docx
+entregables/
 entregables/*
 !entregables/articulo_trabajo_grado.md
 !entregables/articulo_trabajo_grado.docx
