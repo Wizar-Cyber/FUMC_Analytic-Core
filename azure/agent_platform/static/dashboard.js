@@ -12,6 +12,8 @@ const views = Object.fromEntries(
 let authenticated = false;
 let pocEnabled = false;
 let batchRunning = false;
+let autoAnalyzeTried = false;
+let lastDatabaseSummary = null;
 let activeOperations = 0;
 let pendingSyntheticCases = 0;
 let selectedStudentId = null;
@@ -25,7 +27,6 @@ let programSortKey = "rate";
 let programSortDescending = true;
 let currentStudents = [];
 let currentProfile = null;
-let localDemoStudents = [];
 
 class ApiError extends Error {
   constructor(status, message) {
@@ -38,6 +39,7 @@ async function api(path, options = {}) {
   const response = await fetch(`${API_BASE}${path}`, {
     credentials: "same-origin",
     ...options,
+    signal: options.signal,
     headers: {
       ...(options.body ? { "Content-Type": "application/json" } : {}),
       ...options.headers,
@@ -54,7 +56,7 @@ async function api(path, options = {}) {
     throw new ApiError(response.status, message);
   }
   if (!response.ok) {
-    throw new ApiError(response.status, result.message || text || "La solicitud no fue aceptada.");
+    throw new ApiError(response.status, result.message || text || `La solicitud no fue aceptada (HTTP ${response.status}).`);
   }
   return result;
 }
@@ -76,9 +78,9 @@ function formatNumber(value, digits = 0) {
 function setBlocked(message, showLogin = false) {
   authenticated = false;
   authNotice.className = "notice blocked";
-  authNotice.textContent = `Acceso bloqueado: ${message}`;
+  authNotice.hidden = false;
+  authNotice.textContent = message;
   document.querySelector("#login-link").hidden = !showLogin;
-  document.querySelector("#sidebar-status-text").textContent = "Sin conexión";
   document.querySelector("#sidebar-status-dot").classList.add("offline");
   updateProcessingButtons();
 }
@@ -86,17 +88,26 @@ function setBlocked(message, showLogin = false) {
 function setReady() {
   authenticated = true;
   authNotice.className = "notice ready";
-  authNotice.textContent = "Conexión Entra verificada · datos sintéticos; análisis GPT solo tras iniciar un lote.";
+  authNotice.textContent = "";
+  authNotice.hidden = true;
   document.querySelector("#login-link").hidden = true;
-  document.querySelector("#sidebar-status-text").textContent = "Conectada";
   document.querySelector("#sidebar-status-dot").classList.remove("offline");
   updateProcessingButtons();
 }
 
 function updateProcessingButtons() {
   const runButton = document.querySelector("#batch-run-button");
+  const studentsBatchButton = document.querySelector("#students-batch-button");
   const toggleButton = document.querySelector("#poc-toggle-button");
-  if (runButton) runButton.disabled = !authenticated || !pocEnabled || batchRunning || pendingSyntheticCases === 0;
+  const analyzeButton = document.querySelector("#profile-analyze");
+  if (analyzeButton) {
+    analyzeButton.disabled = !authenticated || !pocEnabled || batchRunning
+      || currentProfile?.student?.student_id !== selectedStudentId
+      || currentProfile?.student?.status !== "pending";
+  }
+  const batchDisabled = !authenticated || !pocEnabled || batchRunning || pendingSyntheticCases === 0;
+  if (runButton) runButton.disabled = batchDisabled;
+  if (studentsBatchButton) studentsBatchButton.disabled = batchDisabled;
   if (toggleButton) {
     toggleButton.disabled = !authenticated || batchRunning || activeOperations > 0;
   }
@@ -342,15 +353,21 @@ function renderRiskDonut(data) {
   );
   const legend = document.createElement("div");
   legend.className = "risk-donut-legend";
-  for (const [label, value, riskClass] of [
-    ["Crítico", critical, "risk-critical"],
-    ["Alto", highOnly, "risk-alto"],
-    ["Medio", medium, "risk-medio"],
-    ["Bajo", data.low_risk || 0, "risk-bajo"],
+  for (const [label, value, tone] of [
+    ["Bajo", data.low_risk || 0, "low"],
+    ["Medio", medium, "medium"],
+    ["Alto", highOnly, "high"],
+    ["Crítico", critical, "critical"],
   ]) {
     const row = document.createElement("div");
     row.className = "legend-item";
-    appendText(row, "span", label, `risk-badge ${riskClass}`);
+    const name = document.createElement("span");
+    name.className = "legend-name";
+    const swatch = document.createElement("span");
+    swatch.className = `legend-dot dot-${tone}`;
+    swatch.setAttribute("aria-hidden", "true");
+    name.append(swatch, document.createTextNode(label));
+    row.append(name);
     appendText(row, "strong", formatNumber(value));
     legend.append(row);
   }
@@ -372,18 +389,20 @@ function renderRiskHeatmap(rows) {
   caption.className = "sr-only";
   const head = document.createElement("tr");
   appendText(head, "th", "Programa").scope = "col";
-  for (let semester = 1; semester <= 9; semester += 1) {
-    appendText(head, "th", String(semester)).scope = "col";
+  const semesters = (dashboardData?.filter_options?.semesters || [1, 2, 3, 4, 5, 6, 7, 8, 9]).map(Number);
+  for (const semester of semesters) {
+    appendText(head, "th", `Sem. ${semester}`).scope = "col";
   }
   const thead = document.createElement("thead");
   thead.append(head);
   table.append(thead);
   const tbody = document.createElement("tbody");
   const programCodes = new Map((dashboardData?.program_faculty || []).map((item) => [item.program, item.program_code || item.program]));
+  const heatMax = Math.max(0.01, ...(rows || []).flatMap((program) => Object.values(program.semesters || {}).map((counts) => (counts.total ? counts.high / counts.total : 0))));
   for (const program of rows || []) {
     const row = document.createElement("tr");
     appendText(row, "th", program.program).scope = "row";
-    for (let semester = 1; semester <= 9; semester += 1) {
+    for (const semester of semesters) {
       const counts = program.semesters?.[String(semester)] || { total: 0, high: 0 };
       const cell = document.createElement("td");
       const button = document.createElement("button");
@@ -391,6 +410,7 @@ function renderRiskHeatmap(rows) {
       button.className = "heatmap-cell";
       const ratio = counts.total ? counts.high / counts.total : 0;
       button.dataset.level = counts.total === 0 ? "empty" : ratio >= 0.25 ? "high" : ratio >= 0.12 ? "medium" : "low";
+      button.style.setProperty("--heat", String(Math.min(1, ratio / Math.max(heatMax, 0.01))));
       button.textContent = counts.total ? `${formatNumber(ratio * 100, 0)}%` : "—";
       button.disabled = counts.total === 0;
       button.setAttribute("aria-label", `${program.program}, semestre ${semester}: ${counts.high} de ${counts.total} en riesgo alto. Filtrar estudiantes.`);
@@ -410,17 +430,21 @@ function renderResults(reviews = []) {
   const empty = document.querySelector("#results-empty");
   list.replaceChildren();
   empty.hidden = reviews.length > 0;
-  empty.textContent = "Sin análisis GPT todavía. Inicia un lote de hasta 5 casos pendientes para generar resultados.";
-  for (const review of reviews.slice(0, 5)) {
+  empty.textContent = "Aún no hay análisis. Usa «Analizar casos prioritarios» para generar los primeros.";
+  for (const review of reviews.slice(0, 50)) {
     const row = document.createElement("li");
     row.className = "pending-item";
     const details = document.createElement("div");
     appendText(details, "strong", review.student_id || `Resultado ${review.review_id}`);
-    appendText(details, "p", `${review.recommendation?.summary || "Análisis generado"} · ${formatNumber((review.model_probability || 0) * 100, 1)}%`, "result-summary");
+    const band = riskBandFromProbability(review.model_probability);
+    const meta = document.createElement("div");
+    meta.className = "result-summary";
+    meta.append(toneChip(band.tone, band.label), document.createTextNode(` ${formatNumber((review.model_probability || 0) * 100, 0)}% · ${(review.recommendation?.proposed_actions || []).length} acción(es)`));
+    details.append(meta);
     const open = document.createElement("button");
     open.type = "button";
     open.className = "secondary";
-    open.textContent = "Ver resultado";
+    open.textContent = "Ver plan";
     open.addEventListener("click", () => review.student_id ? loadProfile(review.student_id) : loadStandaloneResult(review.review_id));
     row.append(details, open);
     list.append(row);
@@ -432,10 +456,11 @@ async function loadStandaloneResult(reviewId) {
     const result = await api(`/reviews/${encodeURIComponent(reviewId)}`);
     selectedStudentId = null;
     showViewWithoutLoad("profile");
-    document.querySelector("#profile-title").textContent = "Resultado multiagente";
-    document.querySelector("#profile-subtitle").textContent = "Caso sintético sin vínculo a un perfil de estudiante.";
+    document.querySelector("#profile-title").textContent = "Plan de intervención";
+    document.querySelector("#profile-subtitle").textContent = "Caso sin expediente asociado.";
     document.querySelector("#profile-content").replaceChildren();
-    renderAnalysis(result.review, "#profile-analysis", "#analysis-content");
+    selectProfileTab("executive");
+    renderExecutive(executiveFromReview(result.review), { review: result.review });
   } catch (error) {
     setStatus("#student-list-status", error.message);
   }
@@ -488,13 +513,14 @@ function renderMetrics(data) {
   const cards = document.querySelector("#aggregate-cards");
   const points = data.trend || [];
   const highRate = data.total_students ? (data.high_risk / data.total_students) * 100 : 0;
-  const followupCoverage = data.high_risk ? (data.active_followups / data.high_risk) * 100 : 0;
+  const atRiskFollowed = data.at_risk_with_followup ?? Math.min(data.active_followups || 0, data.high_risk || 0);
+  const followupCoverage = data.high_risk ? (atRiskFollowed / data.high_risk) * 100 : 0;
   const riskDelta = points.length > 1 ? (points.at(-1).high || 0) - (points.at(-2).high || 0) : 0;
   cards.replaceChildren(
-    makeDashboardKpi("Estudiantes evaluados", data.total_students, "Corte actual", points.map((point) => point.total), "#068CC1", "students"),
+    makeDashboardKpi("Estudiantes evaluados", data.total_students, `Periodo ${data.period_id || "—"}`, points.map((point) => point.total), "#068CC1", "students"),
     makeDashboardKpi("Estudiantes en riesgo (alto + crítico)", data.high_risk, `${formatNumber(highRate, 1)}% del total · ${riskDelta >= 0 ? "+" : ""}${formatNumber(riskDelta)} frente al mes anterior`, points.map((point) => point.high), "#EE0063", "students", { risk: "Alto" }),
-    makeDashboardKpi("Con seguimiento activo", data.active_followups, `Cobertura ${formatNumber(followupCoverage, 1)}% de casos en riesgo`, points.map((point) => point.active_followups), "#0DAA0D", "followups"),
-    makeDashboardKpi("Alertas IA · abiertas", data.open_alerts, `${formatNumber(data.critical_cases)} críticas`, points.map((point) => point.open_alerts), "#E6A51A", "alerts"),
+    makeDashboardKpi("En riesgo con seguimiento", atRiskFollowed, `Cobertura ${formatNumber(followupCoverage, 1)}% de los casos en riesgo`, points.map((point) => point.active_followups), "#0DAA0D", "followups"),
+    makeDashboardKpi("Alertas abiertas", data.open_alerts, `${formatNumber(data.critical_cases)} casos críticos`, points.map((point) => point.open_alerts), "#E6A51A", "alerts"),
   );
   document.querySelector("#risk-donut-total").textContent = formatNumber(data.total_students);
   const notificationCount = document.querySelector("#notification-count");
@@ -538,137 +564,128 @@ function renderProgramSummary(rows) {
     appendText(rateCell, "span", `${formatNumber(program.risk_rate, 1)}%`, `rate-pill ${program.risk_rate >= 18 ? "rate-high" : "rate-normal"}`);
     row.append(rateCell);
     appendText(row, "td", formatNumber(program.active_followups));
-    appendText(row, "td", program.period_delta_pp === null ? "—" : `${program.period_delta_pp > 0 ? "▲ +" : "▼ "}${formatNumber(Math.abs(program.period_delta_pp), 1)} pp`, program.period_delta_pp === null ? "muted" : program.period_delta_pp > 0 ? "trend-up" : "trend-down");
     body.append(row);
   }
-  const sortNames = { total: "evaluados", high: "en riesgo", risk_rate: "% de riesgo" };
-  document.querySelector("#program-sort-label").textContent = `Orden actual: ${sortNames[programSortKey] || "% de riesgo"}`;
-}
-
-function getLocalDemoDashboard() {
-  const groups = (items) => Object.fromEntries(items.map(([name, total, high]) => [name, { total, high }]));
-  const programs = [
-    ["Fisioterapia", "Ciencias de la Salud", 902, 170, 121, 18.8, 0.4],
-    ["Fonoaudiología", "Ciencias de la Salud", 500, 92, 62, 18.4, 1.1],
-    ["Administración de Empresas", "Ciencias Empresariales", 701, 104, 74, 14.8, -0.3],
-    ["Ingeniería de Software", "Ingeniería y Tecnología", 603, 88, 63, 14.6, 1.6],
-    ["Psicología", "Ciencias Sociales y Humanas", 410, 58, 41, 14.1, 0.3],
-    ["Tecnología en Electromedicina", "Ingeniería y Tecnología", 239, 33, 22, 13.8, -0.5],
-    ["Contaduría Pública", "Ciencias Empresariales", 487, 67, 45, 13.8, 0.2],
-  ];
-  return {
-    total_students: 3842, high_risk: 612, critical_cases: 171, medium_risk: 916, low_risk: 2314,
-    active_followups: 428, open_alerts: 37, critical_probability_threshold: .8,
-    period_id: "2026-2", cut: "SEMANA_4", trend_is_simulated: true,
-    by_campus: groups([["Medellín", 2103, 307], ["Cali", 612, 104], ["Neiva", 534, 94], ["Popayán", 593, 107]]),
-    by_city: groups([["Medellín", 2103, 307], ["Cali", 612, 104], ["Neiva", 534, 94], ["Popayán", 593, 107]]),
-    by_faculty: groups([["Ciencias de la Salud", 1402, 262], ["Ciencias Empresariales", 1188, 171], ["Ingeniería y Tecnología", 842, 121], ["Ciencias Sociales y Humanas", 410, 58]]),
-    by_program: groups(programs.map(([name, , total, , , rate]) => [name, total, Math.round(total * rate / 100)])),
-    program_summary: programs.map(([program, faculty, total, high, active_followups, risk_rate, period_delta_pp]) => ({ program, faculty, total, high, active_followups, risk_rate, period_delta_pp })),
-    trend: [
-      ["2025-11", 528, 331], ["2025-12", 514, 342], ["2026-01", 566, 356], ["2026-02", 582, 371],
-      ["2026-03", 598, 388], ["2026-04", 571, 402], ["2026-05", 604, 416], ["2026-06", 612, 428],
-    ].map(([period_id, high, active_followups]) => ({ period_id, total: 3842, high, active_followups, open_alerts: 37 })),
-    risk_by_program_semester: programs.slice(0, 6).map(([program]) => ({
-      program,
-      semesters: Object.fromEntries(Array.from({ length: 9 }, (_, index) => {
-        const total = index < 6 ? 55 + ((index * 13 + program.length) % 70) : 0;
-        return [String(index + 1), { total, high: total ? Math.round(total * (.09 + index * .018)) : 0 }];
-      })),
-    })),
-    filter_options: { campuses: [{ code: "MEDELLIN", name: "Medellín" }, { code: "CALI", name: "Cali" }, { code: "NEIVA", name: "Neiva" }, { code: "POPAYAN", name: "Popayán" }], programs: programs.map(([name]) => ({ code: name, name })) },
-    applied_filters: { campus: "", program: "" }, generated_reviews: [], pending_reviews: [],
-  };
-}
-
-function renderLocalDemoDashboard() {
-  dashboardData = getLocalDemoDashboard();
-  const campusControl = document.querySelector("#dashboard-campus-filter");
-  const programControl = document.querySelector("#dashboard-program-filter");
-  populateSelect(campusControl, dashboardData.filter_options.campuses, "code", "name", "Todas las sedes");
-  populateSelect(programControl, dashboardData.filter_options.programs, "code", "Todos los programas");
-  const selectedCampus = campusControl.value;
-  const selectedProgram = programControl.value;
-  if (selectedCampus) {
-    const selected = Object.entries(dashboardData.by_campus).find(([name]) => name.toUpperCase() === selectedCampus);
-    if (selected) {
-      dashboardData.by_campus = { [selected[0]]: selected[1] };
-      dashboardData.by_city = { [selected[0]]: selected[1] };
-      dashboardData.total_students = selected[1].total;
-      dashboardData.high_risk = selected[1].high;
-    }
-  }
-  if (selectedProgram) {
-    const selected = dashboardData.program_summary.find((item) => item.program === selectedProgram);
-    if (selected) {
-      dashboardData.by_program = { [selected.program]: { total: selected.total, high: selected.high } };
-      dashboardData.total_students = selected.total;
-      dashboardData.high_risk = selected.high;
-      dashboardData.active_followups = selected.active_followups;
-      dashboardData.program_summary = [selected];
-      dashboardData.risk_by_program_semester = dashboardData.risk_by_program_semester.filter((item) => item.program === selected.program);
-    }
-  }
-  authenticated = true;
-  pocEnabled = false;
-  authNotice.hidden = true;
-  renderMetrics(dashboardData);
-  renderRiskChart("#campus-chart", dashboardData.by_campus, "campus");
-  renderRiskChart("#faculty-chart", dashboardData.by_faculty, "faculty");
-  renderTrend("#trend-chart", dashboardData.trend);
-  renderRiskDonut(dashboardData);
-  renderRiskHeatmap(dashboardData.risk_by_program_semester);
-  renderProgramSummary(dashboardData.program_summary);
-  renderResults([]);
-  document.querySelector("#dashboard-period").textContent = dashboardData.period_id;
-  document.querySelector("#sidebar-status-text").textContent = "Demo local";
-  document.querySelector("#sidebar-period").textContent = dashboardData.period_id;
-  document.querySelector("#synthetic-db-status").textContent = "Datos ilustrativos locales · inicia Azure Functions para conectar tablas y agentes.";
-  updateProcessingButtons();
 }
 
 async function runDashboardUpdate() {
-  if (authenticated && pocEnabled && pendingSyntheticCases > 0) {
-    await startBatch();
+  await refreshAll();
+  if (!authenticated) {
+    setBatchStatus("No hay sesión autorizada: inicia sesión para actualizar y analizar casos.");
+    return;
+  }
+  if (!pocEnabled) {
+    setBatchStatus("Datos actualizados; el análisis automático está pausado.");
+  } else if (pendingSyntheticCases === 0) {
+    setBatchStatus("Datos actualizados; no hay casos pendientes de análisis.");
   } else {
-    await refreshAll();
+    setBatchStatus(`Datos actualizados; ${formatNumber(pendingSyntheticCases)} casos pendientes de análisis.`);
+    await startBatch();
   }
 }
 
-async function loadDashboard() {
+const DASHBOARD_FILTERS = [
+  ["campus", "#dashboard-campus-filter"],
+  ["faculty", "#dashboard-faculty-filter"],
+  ["program", "#dashboard-program-filter"],
+  ["semester", "#dashboard-semester-filter"],
+  ["risk", "#dashboard-risk-filter"],
+];
+const DASHBOARD_CACHE_MS = 30_000;
+const dashboardCache = new Map();
+let dashboardController = null;
+let dashboardRequestToken = 0;
+let dashboardFilterTimer = null;
+
+function dashboardFilters() {
+  return Object.fromEntries(DASHBOARD_FILTERS.map(([key, selector]) => [key, document.querySelector(selector)?.value || ""]));
+}
+
+function fillSelect(select, items, allLabel) {
+  if (!select) return;
+  const selected = select.value;
+  select.replaceChildren(new Option(allLabel, ""));
+  for (const [value, label] of items) select.add(new Option(label, value));
+  select.value = [...select.options].some((option) => option.value === selected) ? selected : "";
+}
+
+function populateDashboardFilters(options = {}) {
+  const faculty = document.querySelector("#dashboard-faculty-filter")?.value || "";
+  fillSelect(document.querySelector("#dashboard-campus-filter"), (options.campuses || []).map((item) => [item.code, item.name]), "Todas las sedes");
+  fillSelect(document.querySelector("#dashboard-faculty-filter"), (options.faculties || []).map((item) => [item.name, item.name]), "Todas las facultades");
+  const programs = (options.programs || []).filter((item) => !faculty || item.faculty === faculty);
+  fillSelect(document.querySelector("#dashboard-program-filter"), programs.map((item) => [item.code, item.name]), "Todos los programas");
+  fillSelect(document.querySelector("#dashboard-semester-filter"), (options.semesters || []).map((value) => [String(value), `Semestre ${value}`]), "Todos los semestres");
+  fillSelect(document.querySelector("#dashboard-risk-filter"), (options.risks || []).map((item) => [item.code, item.name]), "Todos los niveles");
+}
+
+function renderFilterSummary(filters) {
+  const node = document.querySelector("#dashboard-filter-summary");
+  const clear = document.querySelector("#dashboard-clear-filters");
+  const active = DASHBOARD_FILTERS.filter(([key]) => filters[key]).length;
+  if (node) node.textContent = active ? `${active} filtro${active === 1 ? "" : "s"} activo${active === 1 ? "" : "s"}` : "";
+  if (clear) clear.hidden = !active;
+}
+
+function renderDashboard(result) {
+  dashboardData = result;
+  populateDashboardFilters(result.filter_options);
+  renderMetrics(result);
+  renderRiskChart("#campus-chart", result.by_campus, "campus");
+  renderRiskChart("#faculty-chart", result.by_faculty, "faculty");
+  renderTrend("#trend-chart", result.trend);
+  renderRiskDonut(result);
+  renderRiskHeatmap(result.risk_by_program_semester);
+  renderProgramSummary(result.program_summary || []);
+  renderResults([...(result.generated_reviews || []), ...(result.pending_reviews || [])]);
+  document.querySelector("#dashboard-period").textContent = result.period_id || "—";
+  document.querySelector("#dashboard-last-updated").textContent = new Date().toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
+  renderFilterSummary(result.applied_filters || dashboardFilters());
+  document.querySelector("#view-dashboard")?.classList.remove("is-loading");
+}
+
+async function loadDashboard({ force = false } = {}) {
+  const filters = dashboardFilters();
+  const key = JSON.stringify(filters);
+  const cached = dashboardCache.get(key);
+  const token = ++dashboardRequestToken;
+  if (cached && !force && Date.now() - cached.at < DASHBOARD_CACHE_MS) {
+    renderDashboard(cached.data);
+    loadDashboardAlerts();
+    return true;
+  }
+  dashboardController?.abort();
+  dashboardController = new AbortController();
+  document.querySelector("#view-dashboard")?.classList.add("is-loading");
   try {
-    const campusControl = document.querySelector("#dashboard-campus-filter");
-    const programControl = document.querySelector("#dashboard-program-filter");
-    const params = new URLSearchParams({
-      campus: campusControl.value,
-      program: programControl.value,
-    });
-    const result = await api(`/poc/dashboard?${params}`);
-    dashboardData = result;
+    const params = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
+    const [result] = await Promise.all([
+      api(`/poc/dashboard?${params}`, { signal: dashboardController.signal }),
+      loadStatus().catch(() => null),
+    ]);
+    if (token !== dashboardRequestToken) return true;
+    dashboardCache.set(key, { at: Date.now(), data: result });
+    if (dashboardCache.size > 40) dashboardCache.delete(dashboardCache.keys().next().value);
     setReady();
-    populateSelect(campusControl, result.filter_options?.campuses, "code", "name", "Todas las sedes");
-    populateSelect(programControl, result.filter_options?.programs, "code", "Todos los programas");
-    renderMetrics(result);
-    renderRiskChart("#campus-chart", result.by_campus, "campus");
-    renderRiskChart("#faculty-chart", result.by_faculty, "faculty");
-    renderTrend("#trend-chart", result.trend);
-    renderRiskDonut(result);
-    renderRiskHeatmap(result.risk_by_program_semester);
-    renderProgramSummary(result.program_summary || []);
-    renderResults([...(result.generated_reviews || []), ...(result.pending_reviews || [])]);
-    document.querySelector("#dashboard-period").textContent = result.period_id;
-    document.querySelector("#dashboard-last-updated").textContent = `Actualizado ${new Date().toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}`;
-    await loadStatus();
-    await loadDashboardAlerts();
+    renderDashboard(result);
+    loadDashboardAlerts();
+    maybeAutoAnalyze();
     return true;
   } catch (error) {
+    if (error.name === "AbortError") return true;
+    document.querySelector("#view-dashboard")?.classList.remove("is-loading");
     if (error.status === 404) {
-      setBlocked("API de gestión no disponible; no se muestran datos locales de demostración.");
+      setBlocked("El servicio de datos no está disponible en este momento.");
       return false;
     }
     setBlocked(error.message || "No se pudo cargar el dashboard.", error.status === 401);
     return false;
   }
+}
+
+function scheduleDashboardReload() {
+  window.clearTimeout(dashboardFilterTimer);
+  dashboardFilterTimer = window.setTimeout(() => loadDashboard(), 120);
 }
 
 async function loadStatus() {
@@ -678,26 +695,19 @@ async function loadStatus() {
     pocEnabled = Boolean(result.enabled);
     activeOperations = result.active_operations || 0;
     pendingSyntheticCases = database.pending || 0;
-    document.querySelector("#synthetic-db-cards").replaceChildren(
-      databaseMetric("Estudiantes", database.student_count),
-      databaseMetric("Pendientes", database.pending),
-      databaseMetric("Procesados", database.processed),
-    );
-    document.querySelector("#synthetic-db-status").textContent = `${formatNumber(database.snapshot_count)} registros · ${database.period_id || "—"} · ${database.cut || "—"} · tablas Azure conectadas.`;
+    lastDatabaseSummary = database;
     document.querySelector("#dashboard-poc-state").textContent = pocEnabled
       ? `Procesamiento ${activeOperations ? "en curso" : "disponible"}`
       : "Procesamiento pausado";
-    document.querySelector("#sidebar-status-text").textContent = pocEnabled ? "Conectada" : "Pausada";
     document.querySelector("#sidebar-status-dot").classList.toggle("offline", !pocEnabled);
-    document.querySelector("#sidebar-period").textContent = database.period_id || "—";
-    document.querySelector("#setting-data-mode").textContent = "Demo · registros generados";
-    document.querySelector("#setting-period").textContent = `${database.period_id || "—"} / ${database.cut || "—"}`;
-    document.querySelector("#setting-batch-limit").textContent = formatNumber(database.max_batch_size);
-    if (dashboardData) document.querySelector("#setting-critical-threshold").textContent = `≥ ${formatNumber(dashboardData.critical_probability_threshold, 2)}`;
+    const cutLabel = String(database.cut || "").replace(/^SEMANA_(\d+)$/i, "Semana $1");
+    document.querySelector("#setting-period").textContent = database.period_id || "—";
+    document.querySelector("#setting-cut").textContent = cutLabel || "—";
+    document.querySelector("#setting-students").textContent = formatNumber(database.student_count);
+    if (dashboardData) document.querySelector("#setting-critical-threshold").textContent = `${formatNumber((dashboardData.critical_probability_threshold || 0) * 100, 0)} %`;
     updateProcessingButtons();
     return result;
   } catch (error) {
-    document.querySelector("#synthetic-db-status").textContent = error.message;
     pocEnabled = false;
     updateProcessingButtons();
     throw error;
@@ -723,7 +733,7 @@ function relativeTime(timestamp) {
 
 async function loadDashboardAlerts() {
   try {
-    const alertFilters = dashboardData?.applied_filters || {};
+    const alertFilters = Object.fromEntries(Object.entries(dashboardData?.applied_filters || {}).filter(([, value]) => value));
     const params = new URLSearchParams({ status: "open", limit: "5", ...alertFilters });
     const { items = [] } = await api(`/poc/alerts?${params}`);
     const list = document.querySelector("#dashboard-alerts-list");
@@ -760,9 +770,13 @@ async function refreshAll() {
   if (refreshInFlight) return;
   refreshInFlight = true;
   try {
-    if (!(await loadDashboard())) return;
-    const active = Object.entries(views).find(([, node]) => !node.hidden)?.[0];
-    if (active && active !== "dashboard") await loadViewData(active);
+    const active = Object.entries(views).find(([, node]) => !node.hidden)?.[0] || "dashboard";
+    if (active === "dashboard") {
+      await loadDashboard({ force: true });
+    } else {
+      await loadStatus().catch(() => null);
+      await loadViewData(active);
+    }
   } finally {
     refreshInFlight = false;
   }
@@ -771,7 +785,7 @@ async function refreshAll() {
 async function loadViewData(name) {
   const loaders = {
     students: loadStudents,
-    profile: () => selectedStudentId ? loadProfile(selectedStudentId) : Promise.resolve(),
+    profile: () => selectedStudentId ? loadProfile(selectedStudentId, { silent: true }) : Promise.resolve(),
     alerts: loadAlerts,
     followups: loadFollowups,
     analytics: loadAnalytics,
@@ -798,138 +812,6 @@ function renderRiskBadge(node, student) {
   node.textContent = critical ? "Crítico" : (student.risk_level || "Sin riesgo");
 }
 
-function renderLocalStudents() {
-  const facultyByProgram = {
-    "Ingeniería de Software": "Ingeniería y Tecnología",
-    Fonoaudiología: "Ciencias de la Salud",
-    "Contaduría Pública": "Ciencias Empresariales",
-    Fisioterapia: "Ciencias de la Salud",
-    Psicología: "Ciencias Sociales y Humanas",
-    "Administración de Empresas": "Ciencias Empresariales",
-    "Tecnología en Electromedicina": "Ingeniería y Tecnología",
-  };
-  const students = [
-    ["Laura Gómez Restrepo", "CC ••••4821", "Ingeniería de Software", "Medellín", 3, 86, "En seguimiento", "02 nov 2026"],
-    ["Andrés Felipe Muñoz", "CC ••••1175", "Fonoaudiología", "Popayán", 2, 83, "Sin responsable", "Sin intervención"],
-    ["Daniela Pérez Ocampo", "CC ••••9034", "Contaduría Pública", "Medellín", 4, 71, "En seguimiento", "29 oct 2026"],
-    ["Camilo Ortiz Vélez", "CC ••••6620", "Fisioterapia", "Cali", 3, 68, "En seguimiento", "30 oct 2026"],
-    ["Sara Cifuentes Mejía", "CC ••••2287", "Fisioterapia", "Neiva", 5, 64, "Seguimiento vencido", "18 oct 2026"],
-    ["Julián Esteban Arias", "CC ••••7741", "Psicología", "Medellín", 2, 57, "Monitoreo", "24 oct 2026"],
-    ["Mariana López Ríos", "CC ••••3318", "Administración de Empresas", "Cali", 4, 49, "Monitoreo", "27 oct 2026"],
-    ["Valentina Ruiz Mora", "CC ••••5802", "Ingeniería de Software", "Medellín", 6, 43, "Sin responsable", "Sin intervención"],
-    ["Mateo Sánchez Gil", "CC ••••1426", "Tecnología en Electromedicina", "Popayán", 3, 38, "Monitoreo", "31 oct 2026"],
-    ["Sofía Restrepo Díaz", "CC ••••4190", "Fonoaudiología", "Neiva", 1, 29, "Al día", "01 nov 2026"],
-    ["Tomás Herrera León", "CC ••••7064", "Psicología", "Medellín", 7, 21, "Al día", "01 nov 2026"],
-    ["Isabella Castro Peña", "CC ••••8653", "Fisioterapia", "Cali", 2, 14, "Al día", "30 oct 2026"],
-  ].map(([display_name, document_id, program, city, semester, score, status, last_intervention], index) => ({
-    student_id: `ST-SYN-${String(index + 1).padStart(6, "0")}`,
-    display_name, document_id, program, city, campus: city.toUpperCase(), semester,
-    model_probability: score / 100, risk_level: score >= 80 ? "Crítico" : score >= 60 ? "Alto" : score >= 30 ? "Medio" : "Bajo",
-    status: "processed", display_status: status, last_intervention, faculty: facultyByProgram[program],
-  }));
-  const search = currentSearch.toLocaleLowerCase("es");
-  const riskFilter = document.querySelector("#filter-risk").value;
-  const programFilter = document.querySelector("#filter-program").value;
-  const campusFilter = document.querySelector("#filter-campus").value;
-  const cityFilter = document.querySelector("#filter-city").value;
-  const facultyFilter = document.querySelector("#filter-faculty").value;
-  const semesterFilter = document.querySelector("#filter-semester").value;
-  const minimumScore = Number(document.querySelector("#filter-min-score").value || 0);
-  const filtered = students.filter((student) => {
-    const matchesSearch = !search || `${student.display_name} ${student.document_id} ${student.program}`.toLocaleLowerCase("es").includes(search);
-    const matchesRisk = riskFilter === "critical"
-      ? student.model_probability >= 0.8
-      : riskFilter
-        ? student.risk_level === riskFilter
-        : true;
-    return matchesSearch
-      && (!programFilter || student.program === programFilter)
-      && (!campusFilter || student.campus === campusFilter || student.city === campusFilter)
-      && (!cityFilter || student.city === cityFilter)
-      && (!facultyFilter || student.faculty === facultyFilter)
-      && (!semesterFilter || String(student.semester) === semesterFilter)
-      && student.model_probability * 100 >= minimumScore;
-  });
-  populateSelect(document.querySelector("#filter-program"), [...new Set(students.map((student) => student.program))].map((name) => ({ code: name, name })), "code", "name", "Todos los programas");
-  populateSelect(document.querySelector("#filter-campus"), [...new Set(students.map((student) => ({ code: student.campus, name: student.city })))], "code", "name", "Todas las sedes");
-  populateSelect(document.querySelector("#filter-city"), [...new Set(students.map((student) => student.city))].map((name) => ({ name })), "name", "name", "Todas las ciudades");
-  populateSelect(document.querySelector("#filter-faculty"), [...new Set(students.map((student) => student.faculty))].map((name) => ({ name })), "name", "name", "Todas las facultades");
-  localDemoStudents = students;
-  currentStudents = filtered;
-  currentTotal = filtered.length;
-  document.querySelector("#student-count").textContent = `Mostrando ${filtered.length} de ${students.length} registros`;
-  document.querySelector("#page-label").textContent = filtered.length ? `Página 1 · ${filtered.length} resultados` : "Sin resultados";
-  document.querySelector("#previous-page").disabled = true;
-  document.querySelector("#next-page").disabled = true;
-  renderRiskSegmentCounts({
-    all: filtered.length,
-    critical: filtered.filter((student) => student.model_probability >= .8).length,
-    high: filtered.filter((student) => student.risk_level === "Alto").length,
-    medium: filtered.filter((student) => student.risk_level === "Medio").length,
-    low: filtered.filter((student) => student.risk_level === "Bajo").length,
-  });
-  const body = document.querySelector("#student-rows");
-  body.replaceChildren();
-  for (const student of filtered) {
-    const row = document.createElement("tr");
-    row.dataset.studentId = student.student_id;
-    row.tabIndex = 0;
-    row.setAttribute("aria-label", `Seleccionar ${student.display_name}, score ${student.model_probability * 100}`);
-    const identity = document.createElement("td");
-    const identityWrap = document.createElement("div");
-    identityWrap.className = "student-identity";
-    const initials = appendText(identityWrap, "span", student.display_name.split(" ").map((part) => part[0]).slice(0, 2).join(""), "student-avatar");
-    initials.setAttribute("aria-hidden", "true");
-    const identityText = document.createElement("span");
-    identityText.className = "student-name-wrap";
-    appendText(identityText, "strong", student.display_name, "student-name");
-    appendText(identityText, "small", student.document_id, "student-document");
-    identityWrap.append(identityText);
-    identity.append(identityWrap);
-    row.append(identity);
-    appendText(row, "td", student.program);
-    appendText(row, "td", student.city);
-    appendText(row, "td", String(student.semester));
-    const scoreCell = document.createElement("td");
-    appendText(scoreCell, "strong", String(Math.round(student.model_probability * 100)), "score-value");
-    const scoreTrack = document.createElement("span");
-    scoreTrack.className = "score-track";
-    const scoreFill = document.createElement("span");
-    scoreFill.className = `score-fill ${student.model_probability >= .8 ? "score-critical" : student.model_probability >= .6 ? "score-high" : student.model_probability >= .3 ? "score-medium" : "score-low"}`;
-    scoreFill.style.width = `${student.model_probability * 100}%`;
-    scoreTrack.append(scoreFill);
-    scoreCell.append(scoreTrack);
-    row.append(scoreCell);
-    const riskCell = document.createElement("td");
-    const badge = document.createElement("span");
-    renderRiskBadge(badge, student);
-    riskCell.append(badge);
-    row.append(riskCell);
-    appendText(row, "td", student.display_status);
-    appendText(row, "td", student.last_intervention);
-    row.addEventListener("click", () => loadQuickView(student));
-    row.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); loadQuickView(student); }
-    });
-    body.append(row);
-  }
-  if (riskFilter) {
-    const expectedRisk = riskFilter === "critical" ? "Crítico" : riskFilter;
-    [...body.children].forEach((row) => {
-      if (row.querySelector(".risk-badge")?.textContent !== expectedRisk) row.remove();
-    });
-    const visibleCount = body.children.length;
-    document.querySelector("#student-count").textContent = `Mostrando ${visibleCount} de ${students.length} registros`;
-    document.querySelector("#page-label").textContent = visibleCount ? `Página 1 · ${visibleCount} resultados` : "Sin resultados";
-  }
-  if (filtered.length) loadQuickView(filtered[0]);
-  else {
-    document.querySelector("#quickview-empty").hidden = false;
-    document.querySelector("#quickview-content").hidden = true;
-  }
-  setStatus("#student-list-status", "Listado listo para revisar y filtrar.");
-}
-
 async function loadStudents() {
   const params = new URLSearchParams({
     search: currentSearch,
@@ -944,7 +826,7 @@ async function loadStudents() {
     limit: String(PAGE_SIZE),
     offset: String(currentOffset),
   });
-  setStatus("#student-list-status", "Consultando registros y filtros en Azure Tables…");
+  setStatus("#student-list-status", "Cargando…");
   try {
     const result = await api(`/poc/students?${params}`);
     populateSelect(document.querySelector("#filter-program"), result.programs, "code", "name", "Todos los programas");
@@ -955,16 +837,8 @@ async function loadStudents() {
     currentTotal = result.total || 0;
     currentStudents = result.items || [];
     document.querySelector("#student-count").textContent = `${formatNumber(currentTotal)} estudiantes`;
-    document.querySelector("#table-cut").textContent = `${result.period_id || "2025-2"} · ${result.cut || "SEMANA_4"}`;
+    document.querySelector("#table-cut").textContent = `Periodo ${result.period_id || "—"} · ${String(result.cut || "").replace(/^SEMANA_(\d+)$/i, "Semana $1")}`;
     renderRiskSegmentCounts(result.risk_counts || {});
-    const activeFollowups = await api("/poc/followups?status=all&limit=500").catch(() => ({ items: [] }));
-    const lastFollowupByStudent = new Map();
-    for (const followup of activeFollowups.items || []) {
-      const previous = lastFollowupByStudent.get(followup.student_id);
-      if (!previous || String(followup.updated_at || "") > String(previous.updated_at || "")) {
-        lastFollowupByStudent.set(followup.student_id, followup);
-      }
-    }
     const body = document.querySelector("#student-rows");
     body.replaceChildren();
     for (const student of result.items || []) {
@@ -973,7 +847,16 @@ async function loadStudents() {
         row.tabIndex = 0;
         row.setAttribute("aria-label", `Seleccionar ${student.student_id}, ${student.program}, score ${formatNumber((student.model_probability || 0) * 100, 0)}`);
       const studentCell = document.createElement("td");
-      appendText(studentCell, "strong", student.student_id, "student-id");
+      const identityWrap = document.createElement("div");
+      identityWrap.className = "student-identity";
+      const liveName = student.display_name || student.student_id;
+      appendText(identityWrap, "span", liveName.split(" ").map((part) => part[0]).slice(0, 2).join("").toUpperCase(), "student-avatar").setAttribute("aria-hidden", "true");
+      const identityText = document.createElement("span");
+      identityText.className = "student-name-wrap";
+      appendText(identityText, "strong", liveName, "student-name");
+      appendText(identityText, "small", student.document_id || student.student_id, "student-document");
+      identityWrap.append(identityText);
+      studentCell.append(identityWrap);
       row.append(studentCell);
       appendText(row, "td", student.program);
       appendText(row, "td", student.city);
@@ -994,14 +877,13 @@ async function loadStudents() {
       renderRiskBadge(badge, student);
       riskCell.append(badge);
       row.append(riskCell);
-      const followup = lastFollowupByStudent.get(student.student_id);
-      appendText(row, "td", followup ? statusLabelFollowup(followup.status) : statusLabel(student.status));
-      appendText(row, "td", followup?.updated_at ? new Date(followup.updated_at).toLocaleDateString("es-CO") : "Sin responsable");
-      row.addEventListener("click", () => loadQuickView(student, followup));
+      appendText(row, "td", student.display_status || statusLabel(student.status));
+      appendText(row, "td", student.last_intervention || "Sin intervención");
+      row.addEventListener("click", () => loadQuickView(student));
       row.addEventListener("keydown", (event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
-          loadQuickView(student, followup);
+          loadQuickView(student);
         }
       });
       body.append(row);
@@ -1013,10 +895,10 @@ async function loadStudents() {
     document.querySelector("#previous-page").disabled = currentOffset === 0;
     document.querySelector("#next-page").disabled = currentOffset + PAGE_SIZE >= currentTotal;
     document.querySelector("#students-assign-button").disabled = !selectedStudentId;
-    setStatus("#student-list-status", "Consulta aplicada en backend; los filtros se conservan al paginar.");
+    setStatus("#student-list-status", "");
   } catch (error) {
     if (error.status === 404) {
-      setStatus("#student-list-status", "API no disponible; no se muestran perfiles locales de demostración.");
+      setStatus("#student-list-status", "No se pudo cargar el listado. Inténtalo de nuevo.");
       return;
     }
     setStatus("#student-list-status", error.message || "No se pudo cargar el listado.");
@@ -1028,6 +910,35 @@ function renderRiskSegmentCounts(counts) {
   for (const [id, key] of [["risk-count-all", "all"], ["risk-count-critical", "critical"], ["risk-count-high", "high"], ["risk-count-medium", "medium"], ["risk-count-low", "low"]]) {
     document.querySelector(`#${id}`).textContent = formatNumber(counts[key] || 0);
   }
+}
+
+function makeArcGauge(score, caption, className = "arc-gauge") {
+  const NS = "http://www.w3.org/2000/svg";
+  const value = Math.max(0, Math.min(100, score));
+  const color = value >= 70 ? "var(--magenta)" : value >= 50 ? "#e07b00" : value >= 30 ? "var(--brand)" : "var(--success)";
+  const wrapper = document.createElement("div");
+  wrapper.className = className;
+  wrapper.setAttribute("role", "img");
+  wrapper.setAttribute("aria-label", `${caption}: ${value} de 100`);
+  const svg = document.createElementNS(NS, "svg");
+  svg.setAttribute("viewBox", "0 0 120 120");
+  svg.setAttribute("aria-hidden", "true");
+  for (const [cls, dash] of [["arc-track", 75], ["arc-value", value * 0.75]]) {
+    const circle = document.createElementNS(NS, "circle");
+    circle.setAttribute("class", cls);
+    circle.setAttribute("cx", "60");
+    circle.setAttribute("cy", "60");
+    circle.setAttribute("r", "48");
+    circle.setAttribute("pathLength", "100");
+    circle.setAttribute("stroke-dasharray", `${dash} 100`);
+    circle.setAttribute("transform", "rotate(135 60 60)");
+    if (cls === "arc-value") circle.setAttribute("stroke", color);
+    svg.append(circle);
+  }
+  wrapper.append(svg);
+  appendText(wrapper, "strong", String(value));
+  appendText(wrapper, "span", caption);
+  return wrapper;
 }
 
 async function loadQuickView(student, followup = null) {
@@ -1044,24 +955,14 @@ async function loadQuickView(student, followup = null) {
   appendText(heading, "p", `${student.program} · ${student.city} · Sem. ${student.semester}`, "muted");
   content.append(heading);
   const score = Math.round((student.model_probability || 0) * 100);
-  const gauge = document.createElement("div");
-  gauge.className = "score-gauge";
-  gauge.style.setProperty("--score", `${score * 3.6}deg`);
-  appendText(gauge, "strong", String(score));
-  appendText(gauge, "span", "Score IA (0–100)");
-  content.append(gauge);
+  content.append(makeArcGauge(score, "Riesgo (0–100)"));
   const risk = document.createElement("span");
   renderRiskBadge(risk, student);
   content.append(risk);
-  const factors = document.createElement("div");
-  factors.className = "quickview-factors";
-  appendText(factors, "h3", "Señales disponibles");
-  appendText(factors, "p", "Consulta el perfil para ver señales académicas, financieras y de bienestar. El score no implica causalidad.", "muted");
-  content.append(factors);
-  appendText(content, "p", followup ? `Estado: ${statusLabelFollowup(followup.status)} · ${followup.action_label}` : `Estado del análisis: ${statusLabel(student.status)} · sin seguimiento activo`, "quickview-status");
+  appendText(content, "p", followup ? `Estado: ${statusLabelFollowup(followup.status)} · ${followup.action_label}` : "Sin seguimiento activo", "quickview-status");
   const actions = document.createElement("div");
   actions.className = "quickview-actions";
-  addActionButton(actions, "Abrir perfil 360°", "", () => loadProfile(student.student_id));
+  addActionButton(actions, "Ver resumen ejecutivo", "", () => loadProfile(student.student_id));
   addActionButton(actions, "Registrar seguimiento", "secondary", () => createQuickFollowup(student.student_id));
   addActionButton(actions, "Asignar responsable", "secondary", () => assignResponsible(student.student_id, followup));
   content.append(actions);
@@ -1147,41 +1048,41 @@ function renderProfileGauges(student) {
   const container = document.querySelector("#profile-gauges");
   container.replaceChildren();
   const score = Math.round((student.model_probability || 0) * 100);
-  const gauge = document.createElement("div");
-  gauge.className = "profile-score-gauge";
-  gauge.style.setProperty("--score", `${score * 3.6}deg`);
-  gauge.setAttribute("role", "img");
-  gauge.setAttribute("aria-label", `Score IA ${score} de 100`);
-  appendText(gauge, "strong", String(score));
-  appendText(gauge, "span", "Score IA (0–100)");
-  const probability = document.createElement("div");
-  probability.className = "probability-ring";
-  probability.setAttribute("role", "img");
-  probability.setAttribute("aria-label", `Probabilidad reportada ${formatNumber((student.model_probability || 0) * 100, 1)}%`);
-  appendText(probability, "strong", `${formatNumber((student.model_probability || 0) * 100, 0)}%`);
-  appendText(probability, "span", "Prob. modelo");
-  container.append(gauge, probability);
+  container.append(makeArcGauge(score, "Riesgo (0–100)", "arc-gauge arc-gauge-lg"));
 }
 
-async function loadProfile(studentId) {
+let profileRequestToken = 0;
+
+async function loadProfile(studentId, { silent = false } = {}) {
+  const token = ++profileRequestToken;
+  const sameProfile = currentProfile?.student?.student_id === studentId;
+  const keepVisible = silent && sameProfile;
   selectedStudentId = studentId;
   showViewWithoutLoad("profile");
-  selectProfileTab("summary");
-  document.querySelector("#profile-title").textContent = studentId;
-  document.querySelector("#profile-subtitle").textContent = "Consultando expediente académico, financiero y de bienestar…";
+  if (!keepVisible) {
+    selectProfileTab("executive");
+    document.querySelector("#profile-title").textContent = studentId;
+    document.querySelector("#profile-subtitle").textContent = "Cargando…";
+    document.querySelector("#profile-content").replaceChildren();
+    document.querySelector("#profile-executive").replaceChildren();
+  }
   updateProfileNavigation(studentId);
-  document.querySelector("#profile-content").replaceChildren();
-  document.querySelector("#profile-analysis").hidden = true;
-  document.querySelector("#profile-recommendations").hidden = true;
   try {
-    const result = await api(`/poc/students/${encodeURIComponent(studentId)}`);
+    const [result, followupResult] = await Promise.all([
+      api(`/poc/students/${encodeURIComponent(studentId)}`),
+      api(`/poc/followups?status=all&limit=100&student_id=${encodeURIComponent(studentId)}`).catch(() => ({ items: [] })),
+    ]);
+    if (token !== profileRequestToken) return;
     const student = result.student;
     currentProfile = result;
-    document.querySelector("#profile-title").textContent = student.student_id;
-    document.querySelector("#profile-breadcrumb").textContent = student.student_id;
+    const displayName = student.display_name || student.student_id;
+    document.querySelector("#profile-title").textContent = displayName;
+    document.querySelector("#profile-breadcrumb").textContent = displayName;
+    const liveAvatar = document.querySelector(".profile-avatar");
+    if (liveAvatar) liveAvatar.textContent = displayName.replace(/[^A-Za-zÁÉÍÓÚÑáéíóúñ ]/g, " ").split(/\s+/).filter(Boolean).map((part) => part[0]).slice(0, 2).join("").toUpperCase() || "ST";
     document.querySelector("#profile-period-chip").textContent = `Matrícula ${student.period_id}`;
     renderProfileGauges(student);
-    const followupResult = await api("/poc/followups?status=all&limit=500").catch(() => ({ items: [] }));
+    updateProcessingButtons();
     const studentFollowups = (followupResult.items || []).filter((item) => item.student_id === studentId);
     const followupChip = document.querySelector("#profile-followup-chip");
     followupChip.hidden = studentFollowups.length === 0;
@@ -1196,86 +1097,74 @@ async function loadProfile(studentId) {
       appendText(item, "span", `${statusLabelFollowup(followup.status)} · ${followup.owner} · vence ${followup.due_date}`);
       followupList.append(item);
     }
-    document.querySelector("#profile-subtitle").textContent = `${student.program} · ${student.faculty || ""} · ${student.city} · ${student.period_id} · ${student.cut}`;
+    document.querySelector("#profile-subtitle").textContent = [student.document_id || student.student_id, student.program, student.campus && `Sede ${student.campus}`, student.semester && `Semestre ${student.semester}`].filter(Boolean).join(" · ");
     const badge = document.querySelector("#profile-risk");
     renderRiskBadge(badge, student);
-    badge.append(document.createTextNode(` · ${formatNumber((student.model_probability || 0) * 100, 1)}%`));
-    const hero = document.createElement("section");
-    hero.className = "panel profile-hero";
-    const identity = document.createElement("div");
-    appendText(identity, "strong", student.student_id, "student-id");
-    appendText(identity, "p", `${student.program} · ${student.faculty || ""} · ${student.city} · ${student.campus}`, "profile-id");
-    hero.append(identity, fact("Score reportado", `${formatNumber((student.model_probability || 0) * 100, 1)}%`));
-    const summary = document.createElement("section");
-    summary.className = "panel profile-card";
-    appendText(summary, "h2", "Perfil académico y de contexto");
-    const facts = document.createElement("div");
-    facts.className = "profile-facts";
-    for (const pair of [["Programa", student.program], ["Facultad", student.faculty], ["Ciudad", student.city], ["Sede", student.campus], ["Modalidad", student.modality], ["Semestre", student.semester], ["Estado de análisis", statusLabel(student.status)]]) facts.append(fact(pair[0], pair[1]));
-    summary.append(facts);
-    const content = document.querySelector("#profile-content");
-    content.append(hero, summary);
-    content.append(makeProfileCard("Panel académico", (result.academic_signals || []).map((signal) => [signal.course_code, `${formatNumber(signal.grade, 2)} / 5 · asistencia ${formatNumber(signal.attendance_pct, 1)}%`])));
-    content.append(makeProfileCard("Panel socioeconómico", [["Mora", `${result.finance.arrears_months} meses`], ["Saldo", `${formatNumber(result.finance.arrears_balance_cop)} COP`], ["Financiación", result.finance.financing_type], ["Beca", result.finance.has_scholarship ? "Sí" : "No"], ["Contexto familiar", student.family_context]]));
-    content.append(makeProfileCard("Bienestar", [["Apoyo registrado", result.wellbeing.support_type || "Sin registro"], ["Sesiones", result.wellbeing.sessions], ["Asistencia", result.wellbeing.attended ? "Sí" : "No"], ["Canal", result.wellbeing.channel]]));
-    if (result.analysis_result?.review) {
-      renderAnalysis(result.analysis_result.review, "#profile-analysis", "#analysis-content");
-      renderAnalysis(result.analysis_result.review, "#profile-recommendations", "#recommendations-content");
-    } else {
-      document.querySelector("#profile-analysis").hidden = false;
-      document.querySelector("#profile-recommendations").hidden = false;
-      document.querySelector("#analysis-content").replaceChildren();
-      appendText(document.querySelector("#analysis-content"), "p", "Este perfil todavía no tiene un análisis de agentes. En Dashboard, inicia un lote de hasta 5 casos pendientes; el lote procesa los casos más antiguos y puede no incluir este perfil.");
-      document.querySelector("#recommendations-content").replaceChildren();
-      appendText(document.querySelector("#recommendations-content"), "p", "Las recomendaciones aparecerán cuando los agentes terminen el análisis.");
+    const signals = result.academic_signals || [];
+    const avg = (key) => signals.length ? signals.reduce((sum, item) => sum + Number(item[key] || 0), 0) / signals.length : null;
+    const attendance = avg("attendance_pct");
+    const grade = avg("grade");
+    const atRisk = signals.filter((item) => Number(item.grade) < 3).length;
+    const arrears = Number(result.finance?.arrears_months || 0);
+    const metrics = document.createElement("section");
+    metrics.className = "profile-metrics-grid";
+    for (const [label, value, note, tone] of [
+      ["Asistencia promedio", attendance === null ? "Sin dato" : `${formatNumber(attendance, 0)}%`, attendance !== null && attendance < 75 ? "▼ Por debajo del 75 %" : "Dentro de lo esperado", attendance !== null && attendance < 75 ? "negative" : "positive"],
+      ["Promedio del periodo", grade === null ? "Sin dato" : formatNumber(grade, 1), atRisk ? `▼ ${atRisk} materia(s) bajo 3,0` : "Sin materias en riesgo", atRisk ? "negative" : "positive"],
+      ["Acompañamiento de bienestar", result.wellbeing?.attended ? "Sí" : "No", result.wellbeing?.support_type || "Sin registro", result.wellbeing?.attended ? "positive" : "warning"],
+      ["Mora en matrícula", arrears ? `${arrears} mes(es)` : "No", arrears ? `${formatNumber(result.finance?.arrears_balance_cop)} COP` : "• Al día", arrears ? "negative" : "positive"],
+    ]) {
+      const card = document.createElement("section");
+      card.className = "panel profile-metric-card";
+      appendText(card, "span", label, "profile-metric-label");
+      appendText(card, "strong", String(value), "profile-metric-value");
+      appendText(card, "small", note, `profile-metric-note ${tone}`);
+      metrics.append(card);
     }
+    const main = document.createElement("div");
+    main.className = "profile-main-col";
+    main.append(
+      metrics,
+      makeProfileCard("Información personal", [["Documento", student.document_id], ["Periodo", student.period_id], ["Modalidad", student.modality], ["Contexto familiar", student.family_context], ["Financiación", result.finance?.financing_type], ["Beca", result.finance?.has_scholarship ? "Sí" : "No"]]),
+      makeProfileCard("Datos académicos", [["Programa", student.program], ["Facultad", student.faculty], ["Sede", student.campus], ["Ciudad", student.city], ["Semestre", student.semester], ["Estado del análisis", statusLabel(student.status)]]),
+    );
+    const courses = makeProfileCard("Materias del periodo", signals.map((signal) => [signal.course_code, `${formatNumber(signal.grade, 1)} / 5 · asistencia ${formatNumber(signal.attendance_pct, 0)}%`]));
+    main.append(courses);
+    const side = document.createElement("aside");
+    side.className = "profile-side-col";
+    const next = studentFollowups.find((item) => !["completed", "closed"].includes(item.status));
+    side.append(makeProfileCard("Próxima acción", next ? [[next.action_label, ""], ["Responsable", next.owner], ["Vence", next.due_date]] : [["Sin acciones pendientes", ""]]));
+    const queue = document.createElement("section");
+    queue.className = "panel profile-card";
+    appendText(queue, "h2", "Cola de casos prioritarios");
+    const queueList = document.createElement("ul");
+    queueList.className = "priority-queue";
+    for (const item of currentStudents.slice(0, 5)) {
+      const li = document.createElement("li");
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "queue-item" + (item.student_id === studentId ? " active" : "");
+      button.addEventListener("click", () => loadProfile(item.student_id));
+      appendText(button, "span", item.display_name || item.student_id);
+      appendText(button, "strong", String(Math.round((item.model_probability || 0) * 100)));
+      li.append(button);
+      queueList.append(li);
+    }
+    queue.append(queueList);
+    side.append(queue);
+    const content = document.createDocumentFragment();
+    content.append(main, side);
+    document.querySelector("#profile-content").replaceChildren(content);
+    const review = result.analysis_result?.review || null;
+    renderExecutive(result.executive || (review ? executiveFromReview(review) : null), { review, signals, studentId });
   } catch (error) {
     if (error.status === 404) {
-      appendText(document.querySelector("#profile-content"), "p", "No se cargó el perfil: la API no está disponible. No se muestran expedientes locales de demostración.", "profile-loading");
+      appendText(document.querySelector("#profile-content"), "p", "No se pudo cargar el perfil. Inténtalo de nuevo en unos segundos.", "profile-loading");
       return;
     }
     appendText(document.querySelector("#profile-content"), "p", error.message || "No se pudo cargar el expediente.", "profile-loading");
     if ([401, 403, 503].includes(error.status)) setBlocked(error.message, error.status === 401);
   }
-}
-
-function renderLocalProfile(studentId) {
-  const student = localDemoStudents.find((item) => item.student_id === studentId) || localDemoStudents[0];
-  if (!student) return;
-  selectedStudentId = student.student_id;
-  showViewWithoutLoad("profile");
-  selectProfileTab("summary");
-  document.querySelector("#profile-title").textContent = student.display_name;
-  document.querySelector("#profile-breadcrumb").textContent = student.display_name;
-  document.querySelector("#profile-subtitle").textContent = `${student.document_id} · ${student.program} · Sede ${student.city} · Semestre ${student.semester}`;
-  document.querySelector("#profile-period-chip").textContent = "Matrícula activa 2026-2";
-  const avatar = document.querySelector(".profile-avatar");
-  if (avatar) avatar.textContent = student.display_name.split(" ").map((part) => part[0]).slice(0, 2).join("");
-  renderProfileGauges(student);
-  const badge = document.querySelector("#profile-risk");
-  renderRiskBadge(badge, student);
-  badge.append(document.createTextNode(` · ${Math.round(student.model_probability * 100)}`));
-  const followupChip = document.querySelector("#profile-followup-chip");
-  followupChip.hidden = false;
-  followupChip.textContent = "En seguimiento prioritario";
-  const content = document.querySelector("#profile-content");
-  content.replaceChildren();
-  const metrics = document.createElement("section");
-  metrics.className = "profile-metrics-grid";
-  for (const [label, value, note, tone] of [["Asistencia (últimas 3 semanas)", "71%", "▼ 38% menos que su promedio", "negative"], ["Promedio acumulado", "3,2", "▼ Venía en 3,6 al cerrar el sem. 1", "negative"], ["Actividad en plataforma virtual", "4 días", "Sin ingreso reciente", "warning"], ["Mora en matrícula", "No", "• Al día", "positive"], ["Próxima acción", "Llamada de seguimiento", "Vence en 7 días", "warning"]]) {
-    const card = document.createElement("section");
-    card.className = "panel profile-metric-card";
-    appendText(card, "span", label, "profile-metric-label");
-    appendText(card, "strong", value, "profile-metric-value");
-    appendText(card, "small", note, `profile-metric-note ${tone}`);
-    metrics.append(card);
-  }
-  content.append(metrics);
-  content.append(makeProfileCard("Información personal", [["Documento", student.document_id], ["Ingreso", "2025-2"], ["Modalidad", "Presencial"], ["Contacto", "Registrado en el sistema académico"], ["Acudiente", "Registrado"]]));
-  content.append(makeProfileCard("Datos académicos", [["Programa", student.program], ["Sede", student.city], ["Semestre", student.semester], ["Materias en curso", "6 (3 en riesgo)"], ["Promedio acumulado", "3,2"], ["Estado académico", "Activo · en seguimiento"]]));
-  content.append(makeProfileCard("Cola de casos prioritarios", localDemoStudents.slice(0, 5).map((item) => [item.display_name, Math.round(item.model_probability * 100)])));
-  document.querySelector("#profile-analysis").hidden = true;
-  document.querySelector("#profile-recommendations").hidden = true;
 }
 
 function updateProfileNavigation(studentId) {
@@ -1307,43 +1196,222 @@ function selectStudentTableRow(studentId) {
   });
 }
 
-function renderAnalysis(review, panelSelector, contentSelector) {
-  const panel = document.querySelector(panelSelector);
-  const content = document.querySelector(contentSelector);
-  if (panel) panel.hidden = false;
-  if (content) content.replaceChildren();
-  const recommendation = review.recommendation || {};
-  const statusLabel = review.status === "pending_approval"
-    ? "pendiente de revisión humana"
-    : review.status === "generated"
-      ? "generado"
-      : `decisión humana: ${review.status || "registrada"}`;
-  appendText(content, "p", `Resultado ${statusLabel} · probabilidad ${formatNumber((review.model_probability || 0) * 100, 1)}% · sin decisión automatizada.`);
-  appendText(content, "h3", "Síntesis del LLM");
-  appendText(content, "p", recommendation.summary || "Sin síntesis.");
-  appendList(content, "Acciones sugeridas", recommendation.proposed_actions || []);
-  appendList(content, "Limitaciones", recommendation.limitations || []);
-  for (const [title, analysis] of [
-    ["Agente financiero", review.socioeconomic_analysis],
-    ["Agente académico", review.academic_analysis?.analysis],
-    ["Agente de bienestar", review.wellbeing_analysis],
-  ]) {
-    if (!analysis) continue;
-    appendText(content, "h3", title);
-    appendText(content, "p", analysis.summary || "Sin análisis.");
-    appendList(content, "Observaciones", analysis.observations || []);
-    appendList(content, "Limitaciones", analysis.limitations || []);
+const TONE_ICON = { critical: "▲", high: "◆", medium: "■", low: "●", neutral: "○" };
+const ACTION_STATE = {
+  done: { icon: "✓", label: "Completada" },
+  in_progress: { icon: "◔", label: "En curso" },
+  pending: { icon: "○", label: "Pendiente" },
+};
+const FALLBACK_ACTION_LABELS = {
+  retention_contact: "Contacto desde permanencia",
+  academic_advisor_review: "Cita con asesor académico",
+  tutoring_review: "Tutoría en asignaturas críticas",
+  financial_aid_review: "Evaluación de apoyo financiero",
+  wellbeing_review: "Seguimiento en bienestar universitario",
+};
+
+function riskBandFromProbability(probability) {
+  const p = Number(probability) || 0;
+  if (p >= 0.8) return { label: "Crítico", tone: "critical" };
+  if (p >= 0.6) return { label: "Alto", tone: "high" };
+  if (p >= 0.3) return { label: "Medio", tone: "medium" };
+  return { label: "Bajo", tone: "low" };
+}
+
+// Vista mínima cuando solo existe el resultado del análisis (sin expediente).
+function executiveFromReview(review) {
+  const probability = Number(review?.model_probability) || 0;
+  const band = riskBandFromProbability(probability);
+  const codes = [...(probability >= 0.6 ? ["retention_contact"] : []), ...(review?.recommendation?.proposed_actions || [])];
+  return {
+    risk: { ...band, probability_pct: Math.round(probability * 1000) / 10 },
+    priority: { score: Math.round(probability * 100), label: { critical: "Inmediata", high: "Alta", medium: "Programada", low: "Monitoreo" }[band.tone], tone: band.tone },
+    explanation: review?.recommendation?.summary ? { text: review.recommendation.summary, source: "consolidated" } : null,
+    status: review?.status === "pending_approval" ? { label: "Plan por validar", tone: "high" } : { label: "Sin intervención", tone: "neutral" },
+    factors: [],
+    actions: [...new Set(codes)].filter((code) => FALLBACK_ACTION_LABELS[code]).slice(0, 4).map((code) => ({ code, label: FALLBACK_ACTION_LABELS[code], state: "pending", assignable: false })),
+    timeline: [],
+    analyzed: true,
+    pending_validation: review?.status === "pending_approval",
+  };
+}
+
+function toneChip(tone, label, className = "tone-chip") {
+  const chip = document.createElement("span");
+  chip.className = `${className} tone-${tone || "neutral"}`;
+  appendText(chip, "span", TONE_ICON[tone] || TONE_ICON.neutral, "tone-icon").setAttribute("aria-hidden", "true");
+  appendText(chip, "span", label);
+  return chip;
+}
+
+function execTile(label, valueNode, foot, tone = "") {
+  const tile = document.createElement("section");
+  tile.className = `panel exec-tile${tone ? ` tone-${tone}` : ""}`;
+  appendText(tile, "span", label, "exec-tile-label");
+  const value = document.createElement("div");
+  value.className = "exec-tile-value";
+  value.append(valueNode);
+  tile.append(value);
+  if (foot) tile.append(foot);
+  return tile;
+}
+
+function meter(value, tone, label) {
+  const bar = document.createElement("div");
+  bar.className = `exec-meter tone-${tone || "neutral"}`;
+  bar.setAttribute("role", "meter");
+  bar.setAttribute("aria-valuemin", "0");
+  bar.setAttribute("aria-valuemax", "100");
+  bar.setAttribute("aria-valuenow", String(value));
+  bar.setAttribute("aria-label", label);
+  bar.title = `${label}: ${value}/100`;
+  const fill = document.createElement("span");
+  fill.style.width = `${Math.max(2, Math.min(100, value))}%`;
+  bar.append(fill);
+  return bar;
+}
+
+function execCard(title, className = "") {
+  const card = document.createElement("section");
+  card.className = `panel exec-card ${className}`.trim();
+  appendText(card, "h2", title);
+  return card;
+}
+
+function renderExecutive(view, { review = null, signals = [], studentId = null } = {}) {
+  const root = document.querySelector("#profile-executive");
+  root.replaceChildren();
+  if (!view) {
+    appendText(root, "p", "Sin información disponible.", "profile-loading");
+    return;
   }
-  const sources = review.academic_analysis?.sources || [];
-  if (sources.length) appendList(content, "Fuentes recuperadas", sources.map((source) => `${source.title || source.id}${source.section ? ` · ${source.section}` : ""}`));
-  if (review.token_usage) renderUsage(content, review.token_usage, review.cost_estimate);
-  if (review.status === "pending_approval" && review.review_id && panelSelector !== "#profile-recommendations") {
-    const actions = document.createElement("div");
-    actions.className = "review-actions";
-    appendText(actions, "p", "La recomendación requiere validación profesional antes de registrar una intervención.", "muted");
-    addActionButton(actions, "Aprobar propuesta", "primary-action", () => submitReviewDecision(review.review_id, "approved"));
-    addActionButton(actions, "Rechazar propuesta", "danger", () => submitReviewDecision(review.review_id, "rejected"));
-    content.append(actions);
+
+  // 1. Cabecera: riesgo (nivel + probabilidad), prioridad y estado. Cada dato una sola vez.
+  const kpis = document.createElement("div");
+  kpis.className = "exec-kpis";
+  const riskValue = document.createElement("div");
+  riskValue.className = "exec-risk-value";
+  riskValue.append(toneChip(view.risk.tone, view.risk.label, "exec-semaphore"));
+  appendText(riskValue, "strong", `${formatNumber(view.risk.probability_pct, 0)}%`);
+  kpis.append(execTile("Riesgo de abandono", riskValue, meter(Math.round(view.risk.probability_pct), view.risk.tone, "Probabilidad estimada"), view.risk.tone));
+  const priority = document.createElement("div");
+  priority.className = "exec-risk-value";
+  appendText(priority, "strong", String(view.priority.score));
+  priority.append(toneChip(view.priority.tone, view.priority.label));
+  kpis.append(execTile("Prioridad de atención", priority, meter(view.priority.score, view.priority.tone, "Score de prioridad"), view.priority.tone));
+  kpis.append(execTile("Estado", toneChip(view.status.tone, view.status.label, "exec-status")));
+  root.append(kpis);
+
+  // 2. Diagnóstico único (integra a todos los agentes) + evidencia, y acciones.
+  const grid = document.createElement("div");
+  grid.className = "exec-grid exec-grid-main";
+  const diagnosis = execCard("Diagnóstico", "exec-diagnosis");
+  if (view.explanation?.source === "preliminary") {
+    appendText(diagnosis.querySelector("h2"), "span", "Preliminar", "exec-tag");
+  }
+  appendText(diagnosis, "p", view.explanation?.text || "Sin diagnóstico disponible.", "exec-explanation");
+  if (view.factors.length) {
+    const list = document.createElement("ul");
+    list.className = "exec-factors";
+    list.setAttribute("aria-label", "Evidencia");
+    for (const factor of view.factors) {
+      const item = document.createElement("li");
+      const text = document.createElement("div");
+      text.className = "exec-factor-text";
+      appendText(text, "strong", factor.label);
+      appendText(text, "span", factor.detail, "exec-detail");
+      const tone = factor.impact >= 70 ? "critical" : factor.impact >= 50 ? "high" : "medium";
+      item.append(text, meter(factor.impact, tone, `Impacto: ${factor.label}`));
+      list.append(item);
+    }
+    diagnosis.append(list);
+  }
+
+  const actionsCard = execCard("Acciones sugeridas");
+  if (view.actions.length) {
+    const list = document.createElement("ul");
+    list.className = "exec-checklist";
+    for (const action of view.actions) {
+      const state = ACTION_STATE[action.state] || ACTION_STATE.pending;
+      const item = document.createElement("li");
+      item.className = `exec-check state-${action.state}`;
+      appendText(item, "span", state.icon, "exec-check-icon").setAttribute("aria-hidden", "true");
+      appendText(item, "span", action.label, "exec-check-label");
+      if (action.state === "pending" && action.assignable && studentId) {
+        addActionButton(item, "Asignar", "secondary compact", () => createActionFollowup(studentId, action.code));
+      } else {
+        appendText(item, "span", state.label, "exec-check-state");
+      }
+      list.append(item);
+    }
+    actionsCard.append(list);
+  } else {
+    appendText(actionsCard, "p", "Monitoreo regular; sin acciones adicionales.", "exec-empty");
+  }
+  if (view.pending_validation && review?.review_id) {
+    const validation = document.createElement("div");
+    validation.className = "exec-validation";
+    addActionButton(validation, "Validar plan", "primary-action", () => submitReviewDecision(review.review_id, "approved"));
+    addActionButton(validation, "Descartar", "secondary", () => submitReviewDecision(review.review_id, "rejected"));
+    actionsCard.append(validation);
+  }
+  grid.append(diagnosis, actionsCard);
+  root.append(grid);
+
+  // 3. Detalle por asignatura + línea de tiempo de intervenciones.
+  const lower = document.createElement("div");
+  lower.className = "exec-grid";
+  if (signals.length) {
+    const coursesCard = execCard("Asignaturas del periodo");
+    const heat = document.createElement("div");
+    heat.className = "exec-heatmap";
+    heat.setAttribute("role", "list");
+    for (const signal of signals) {
+      const grade = Number(signal.grade);
+      const attendance = Number(signal.attendance_pct);
+      const tone = grade < 3 && attendance < 75 ? "critical" : grade < 3 ? "high" : attendance < 75 ? "medium" : "low";
+      const cell = document.createElement("div");
+      cell.className = `exec-heat-cell tone-${tone}`;
+      cell.setAttribute("role", "listitem");
+      cell.title = `${signal.course_code}: nota ${formatNumber(grade, 1)} · asistencia ${formatNumber(attendance, 0)}%`;
+      appendText(cell, "span", signal.course_code, "exec-heat-code");
+      appendText(cell, "strong", formatNumber(grade, 1));
+      appendText(cell, "span", `${formatNumber(attendance, 0)}%`, "exec-heat-att");
+      heat.append(cell);
+    }
+    const legend = document.createElement("p");
+    legend.className = "exec-legend";
+    for (const [tone, label] of [["critical", "Nota y asistencia bajas"], ["high", "Nota < 3,0"], ["medium", "Asistencia < 75%"], ["low", "En rango"]]) {
+      legend.append(toneChip(tone, label, "exec-legend-item"));
+    }
+    coursesCard.append(heat, legend);
+    lower.append(coursesCard);
+  }
+  const timelineCard = execCard("Intervenciones");
+  if (view.timeline.length) {
+    const list = document.createElement("ol");
+    list.className = "exec-timeline";
+    for (const event of view.timeline) {
+      const item = document.createElement("li");
+      appendText(item, "time", event.date);
+      appendText(item, "strong", event.label);
+      appendText(item, "span", [event.status, event.owner].filter(Boolean).join(" · "), "exec-detail");
+      list.append(item);
+    }
+    timelineCard.append(list);
+  } else {
+    appendText(timelineCard, "p", "Sin intervenciones registradas.", "exec-empty");
+  }
+  lower.append(timelineCard);
+  root.append(lower);
+}
+
+async function createActionFollowup(studentId, action) {
+  try {
+    await api("/poc/followups", { method: "POST", body: JSON.stringify({ student_id: studentId, action }) });
+    await Promise.all([loadProfile(studentId, { silent: true }), loadDashboard()]);
+  } catch (error) {
+    setStatus("#profile-batch-status", error.message || "No se pudo asignar la acción.");
   }
 }
 
@@ -1365,36 +1433,9 @@ async function submitReviewDecision(reviewId, decision) {
   }
 }
 
-function appendList(parent, title, values) {
-  if (!values.length) return;
-  appendText(parent, "h3", title);
-  const list = document.createElement("ul");
-  for (const value of values) appendText(list, "li", value);
-  parent.append(list);
-}
-
-function renderUsage(parent, usage, cost) {
-  const table = document.createElement("table");
-  table.className = "usage-table";
-  appendText(table, "caption", "Uso de tokens reportado por agente").className = "sr-only";
-  const head = document.createElement("tr");
-  for (const label of ["Agente", "Entrada", "Salida", "Total"]) appendText(head, "th", label).scope = "col";
-  table.append(head);
-  for (const [name, call] of Object.entries(usage.calls || {})) {
-    const row = document.createElement("tr");
-    appendText(row, "td", name);
-    appendText(row, "td", formatNumber(call.input_tokens));
-    appendText(row, "td", formatNumber(call.output_tokens));
-    appendText(row, "td", formatNumber(call.total_tokens));
-    table.append(row);
-  }
-  parent.append(table);
-  if (cost?.amount_usd != null) appendText(parent, "p", `Estimación registrada: USD ${Number(cost.amount_usd).toFixed(6)} · no es un tope de gasto.`, "usage-note");
-}
-
 async function loadAlerts() {
   const status = document.querySelector("#alert-status").value;
-  setStatus("#alert-list-status", "Consultando alertas persistidas…");
+  setStatus("#alert-list-status", "Cargando…");
   try {
     const { items = [] } = await api(`/poc/alerts?status=${encodeURIComponent(status)}&limit=500`);
     const body = document.querySelector("#alert-rows");
@@ -1427,7 +1468,7 @@ async function loadAlerts() {
       row.append(actions);
       body.append(row);
     }
-    setStatus("#alert-list-status", `${formatNumber(items.length)} alertas consultadas. Reconocer/resolver persiste estado y auditoría en Azure Tables.`);
+    setStatus("#alert-list-status", `${formatNumber(items.length)} alertas`);
   } catch (error) {
     setStatus("#alert-list-status", error.message);
   }
@@ -1444,7 +1485,7 @@ async function updateAlert(alertId, status) {
 
 async function loadFollowups() {
   const status = document.querySelector("#followup-status").value;
-  setStatus("#followup-list-status", "Consultando tareas de seguimiento…");
+  setStatus("#followup-list-status", "Cargando…");
   try {
     const { items = [] } = await api(`/poc/followups?status=${encodeURIComponent(status)}&limit=500`);
     const body = document.querySelector("#followup-rows");
@@ -1472,7 +1513,7 @@ async function loadFollowups() {
       row.append(actionCell);
       body.append(row);
     }
-    setStatus("#followup-list-status", `${formatNumber(items.length)} seguimientos. Los cambios de estado quedan guardados con actor y fecha.`);
+    setStatus("#followup-list-status", `${formatNumber(items.length)} seguimientos`);
   } catch (error) {
     setStatus("#followup-list-status", error.message);
   }
@@ -1508,7 +1549,7 @@ async function createFollowup(form, studentId, statusSelector) {
   const data = new FormData(form);
   const payload = { student_id: studentId, action: data.get("action") };
   if (data.get("due_date")) payload.due_date = data.get("due_date");
-  setStatus(statusSelector, "Guardando seguimiento en Azure Tables…");
+  setStatus(statusSelector, "Guardando seguimiento…");
   try {
     const result = await api("/poc/followups", { method: "POST", body: JSON.stringify(payload) });
     form.reset();
@@ -1599,7 +1640,7 @@ async function loadReports() {
 
 async function exportReviews() {
   const status = document.querySelector("#report-status");
-  setStatus("#report-status", "Consultando resultados protegidos…");
+  setStatus("#report-status", "Preparando exportación…");
   try {
     const { rows = [] } = await api("/reports/reviews");
     if (!rows.length) {
@@ -1612,10 +1653,10 @@ async function exportReviews() {
     const url = URL.createObjectURL(new Blob(["\ufeff", csv], { type: "text/csv;charset=utf-8" }));
     const link = document.createElement("a");
     link.href = url;
-    link.download = "resultados_multiagente_demo.csv";
+    link.download = "analisis_casos.csv";
     link.click();
     URL.revokeObjectURL(url);
-    setStatus("#report-status", `${formatNumber(rows.length)} resultados exportados desde la API.`);
+    setStatus("#report-status", `${formatNumber(rows.length)} resultados exportados.`);
   } catch (error) {
     setStatus("#report-status", error.message);
   }
@@ -1644,7 +1685,7 @@ async function exportDashboardReport() {
   ]);
   downloadCsv(
     `resumen_permanencia_${dashboardData.period_id}.csv`,
-    ["Programa", "Facultad ilustrativa", "Evaluados", "En riesgo", "% riesgo", "Seguimiento activo"],
+    ["Programa", "Facultad", "Evaluados", "En riesgo", "% riesgo", "Seguimiento activo"],
     rows,
   );
 }
@@ -1663,7 +1704,7 @@ async function exportStudentsCsv() {
     limit: "100",
     offset: "0",
   });
-  setStatus("#student-list-status", "Consultando todas las páginas filtradas para exportar CSV…");
+  setStatus("#student-list-status", "Preparando exportación…");
   try {
     const first = await api(`/poc/students?${base}`);
     const rows = [...(first.items || [])];
@@ -1673,11 +1714,11 @@ async function exportStudentsCsv() {
       rows.push(...(next.items || []));
     }
     downloadCsv(
-      "estudiantes_demo.csv",
-      ["Código", "Programa", "Facultad", "Ciudad", "Semestre", "Score IA", "Nivel", "Estado"],
+      "estudiantes.csv",
+      ["Código", "Programa", "Facultad", "Ciudad", "Semestre", "Riesgo (%)", "Nivel", "Estado"],
       rows.map((item) => [item.student_id, item.program, item.faculty, item.city, item.semester, formatNumber(item.model_probability * 100, 1), item.risk_level, item.status]),
     );
-    setStatus("#student-list-status", `${formatNumber(rows.length)} registros filtrados exportados.`);
+    setStatus("#student-list-status", `${formatNumber(rows.length)} estudiantes exportados.`);
   } catch (error) {
     setStatus("#student-list-status", error.message);
   }
@@ -1687,17 +1728,17 @@ function exportProfile() {
   if (!currentProfile?.student) return;
   const student = currentProfile.student;
   downloadCsv(
-    `${student.student_id}_demo.csv`,
+    `${student.student_id}_perfil.csv`,
     ["Campo", "Valor"],
-    [["Código", student.student_id], ["Programa", student.program], ["Facultad", student.faculty], ["Ciudad", student.city], ["Sede", student.campus], ["Semestre", student.semester], ["Score IA", formatNumber(student.model_probability * 100, 1)], ["Riesgo", student.risk_level]],
+    [["Código", student.student_id], ["Programa", student.program], ["Facultad", student.faculty], ["Ciudad", student.city], ["Sede", student.campus], ["Semestre", student.semester], ["Riesgo (%)", formatNumber(student.model_probability * 100, 1)], ["Riesgo", student.risk_level]],
   );
 }
 
 async function loadSettings() {
-  setStatus("#settings-status", "Verificando APIs, tablas y estado de procesamiento…");
+  setStatus("#settings-status", "Cargando…");
   try {
     const status = await loadStatus();
-    setStatus("#settings-status", `Conexión verificada · ${formatNumber(status.database?.student_count)} estudiantes cargados · almacenamiento Azure Tables.`);
+    setStatus("#settings-status", "");
   } catch (error) {
     setStatus("#settings-status", error.message);
   }
@@ -1708,41 +1749,83 @@ function setStatus(selector, message) {
   if (node) node.textContent = message;
 }
 
-async function pollBatch(batchId) {
-  const status = document.querySelector("#synthetic-db-status");
+function maybeAutoAnalyze() {
+  const database = lastDatabaseSummary;
+  if (autoAnalyzeTried || batchRunning || !authenticated || !pocEnabled || !database) return;
+  try { if (window.sessionStorage.getItem("autoAnalyzeDone")) return; } catch { /* almacenamiento no disponible */ }
+  if (!database.pending || database.processed || database.processing) return;
+  autoAnalyzeTried = true;
+  startBatch({ auto: true });
+}
+
+function batchProgressText(result) {
+  const progress = result.progress || {};
+  if (!progress.total) return "";
+  const range = typeof progress.maxProbability === "number"
+    ? ` · scores ${formatNumber(progress.minProbability * 100, 1)}%–${formatNumber(progress.maxProbability * 100, 1)}%`
+    : "";
+  return ` ${formatNumber(progress.done)}/${formatNumber(progress.total)}${progress.failed ? ` (${formatNumber(progress.failed)} fallidos)` : ""}${range}`;
+}
+
+function setBatchStatus(message) {
+  for (const selector of ["#batch-status", "#student-list-status", "#profile-batch-status"]) {
+    setStatus(selector, message);
+  }
+  const banner = document.querySelector("#batch-status");
+  if (banner) banner.hidden = !message;
+}
+
+async function pollBatch(batchId, studentId = null) {
   try {
     const result = await api(`/batches/${encodeURIComponent(batchId)}`);
     if (["Completed", "Failed", "Terminated", "Canceled"].includes(result.runtimeStatus)) {
       batchRunning = false;
-      status.textContent = `Lote ${result.runtimeStatus} · ${formatNumber(result.processedCount || 0)} procesados · ${formatNumber(result.failedCount || 0)} fallidos. Los análisis se muestran automáticamente.`;
+      const ok = result.runtimeStatus === "Completed" && !result.failedCount;
+      setBatchStatus(`${ok ? "Análisis completado" : `Lote ${result.runtimeStatus}`} · ${formatNumber(result.processedCount || 0)} procesados · ${formatNumber(result.failedCount || 0)} fallidos${batchProgressText(result) ? ` ·${batchProgressText(result)}` : ""}.`);
       updateProcessingButtons();
       await refreshAll();
-      showView("dashboard");
+      if (studentId) await loadProfile(studentId);
+      else showView("dashboard");
       return;
     }
-    status.textContent = `Lote ${result.runtimeStatus || "Pending"} · agentes socioeconómico/académico y sintetizador trabajando…`;
-    window.setTimeout(() => pollBatch(batchId), 3000);
+    setBatchStatus(`Agentes trabajando en paralelo (${result.runtimeStatus || "Pending"}):${batchProgressText(result) || " iniciando…"}. Puede tardar varios minutos.`);
+    window.setTimeout(() => pollBatch(batchId, studentId), 3000);
   } catch (error) {
     batchRunning = false;
-    status.textContent = `No se pudo consultar el lote: ${error.message}`;
+    setBatchStatus(`No se pudo consultar el análisis: ${error.message}`);
     updateProcessingButtons();
   }
 }
 
-async function startBatch() {
-  if (!authenticated || !pocEnabled || batchRunning || pendingSyntheticCases === 0) return;
-  const limit = Math.min(5, pendingSyntheticCases);
-  if (!window.confirm(`Se analizarán hasta ${limit} registros de demo con la red multiagente y el LLM. El resultado se mostrará al terminar; no se enviarán mensajes ni se ejecutarán intervenciones. ¿Continuar?`)) return;
+async function startBatch(options = {}) {
+  const studentId = typeof options?.studentId === "string" ? options.studentId : null;
+  const auto = options?.auto === true;
+  if (!authenticated) return setBatchStatus("No hay sesión autorizada: inicia sesión para analizar casos.");
+  if (!pocEnabled) return setBatchStatus("El análisis automático está pausado. Reanúdalo desde el Dashboard.");
+  if (batchRunning) return setBatchStatus("Ya hay un análisis en curso; espera a que termine.");
+  if (!studentId && pendingSyntheticCases === 0) return setBatchStatus("No hay casos pendientes de análisis.");
+  const limit = Math.min(lastDatabaseSummary?.max_batch_size || 20, pendingSyntheticCases);
+  const message = studentId
+    ? `Se analizará ${studentId} para generar su plan de intervención. ¿Continuar?`
+    : `Se analizarán hasta ${limit} casos pendientes, empezando por el mayor riesgo. El proceso tarda unos minutos. ¿Continuar?`;
+  if (!auto && !window.confirm(message)) return;
   batchRunning = true;
   updateProcessingButtons();
-  setStatus("#synthetic-db-status", "Reservando casos y enviándolos a Durable Functions…");
+  if (!auto) setBatchStatus("Analizando casos…");
   try {
-    const result = await api("/batches", { method: "POST", body: JSON.stringify({ limit }) });
-    await pollBatch(result.batchId);
+    const body = studentId ? { student_id: studentId } : auto ? { auto: true } : { limit };
+    const result = await api("/batches", { method: "POST", body: JSON.stringify(body) });
+    if (auto) setBatchStatus("Analizando los casos de mayor riesgo…");
+    await pollBatch(result.batchId, studentId);
   } catch (error) {
     batchRunning = false;
-    setStatus("#synthetic-db-status", error.message);
     updateProcessingButtons();
+    if (auto) {
+      // El análisis automático inicial es silencioso: si ya se hizo o hay otro en curso, no se avisa.
+      try { window.sessionStorage.setItem("autoAnalyzeDone", "1"); } catch { /* almacenamiento no disponible */ }
+      return;
+    }
+    setBatchStatus(`No se inició el análisis: ${error.message}`);
     await refreshAll();
   }
 }
@@ -1758,7 +1841,7 @@ async function toggleProcessing() {
     await api("/poc/state", { method: "POST", body: JSON.stringify({ enabled }) });
     await refreshAll();
   } catch (error) {
-    setStatus("#synthetic-db-status", error.message);
+    setStatus("#batch-status", error.message);
   }
 }
 
@@ -1780,8 +1863,26 @@ function bindEvents() {
     showView("students");
   });
   document.querySelector("#dashboard-refresh")?.addEventListener("click", runDashboardUpdate);
-  document.querySelector("#dashboard-campus-filter").addEventListener("change", loadDashboard);
-  document.querySelector("#dashboard-program-filter").addEventListener("change", loadDashboard);
+  document.querySelector("#batch-run-button")?.addEventListener("click", () => startBatch());
+  document.querySelector("#profile-analyze")?.addEventListener("click", () => {
+    if (selectedStudentId) startBatch({ studentId: selectedStudentId });
+  });
+  for (const [key, selector] of DASHBOARD_FILTERS) {
+    document.querySelector(selector)?.addEventListener("change", () => {
+      if (key === "faculty") {
+        populateDashboardFilters(dashboardData?.filter_options);
+      }
+      scheduleDashboardReload();
+    });
+  }
+  document.querySelector("#dashboard-clear-filters")?.addEventListener("click", () => {
+    for (const [, selector] of DASHBOARD_FILTERS) {
+      const select = document.querySelector(selector);
+      if (select) select.value = "";
+    }
+    populateDashboardFilters(dashboardData?.filter_options);
+    scheduleDashboardReload();
+  });
   document.querySelector("#dashboard-export").addEventListener("click", exportDashboardReport);
   document.querySelectorAll("[data-trend-range]").forEach((button) => button.addEventListener("click", () => {
     trendRangeMonths = Number(button.dataset.trendRange);
@@ -1803,7 +1904,7 @@ function bindEvents() {
     showView("followups");
     window.setTimeout(() => document.querySelector("#new-followup-student").focus(), 0);
   });
-  document.querySelector("#students-batch-button").addEventListener("click", startBatch);
+  document.querySelector("#students-batch-button").addEventListener("click", () => startBatch());
   document.querySelector("#students-export-button").addEventListener("click", exportStudentsCsv);
   document.querySelector("#students-assign-button").addEventListener("click", () => assignResponsible());
   document.querySelector("#student-refresh").addEventListener("click", loadStudents);
@@ -1849,9 +1950,9 @@ function bindEvents() {
   document.querySelector("#apply-alert-filter").addEventListener("click", loadAlerts);
   document.querySelector("#followups-refresh").addEventListener("click", loadFollowups);
   document.querySelector("#apply-followup-filter").addEventListener("click", loadFollowups);
-  document.querySelector("#analytics-refresh").addEventListener("click", async () => { await loadDashboard(); await loadAnalytics(); });
-  document.querySelector("#faculties-refresh").addEventListener("click", async () => { await loadDashboard(); await loadFaculties(); });
-  document.querySelector("#programs-refresh").addEventListener("click", async () => { await loadDashboard(); await loadPrograms(); });
+  document.querySelector("#analytics-refresh").addEventListener("click", async () => { await loadDashboard({ force: true }); await loadAnalytics(); });
+  document.querySelector("#faculties-refresh").addEventListener("click", async () => { await loadDashboard({ force: true }); await loadFaculties(); });
+  document.querySelector("#programs-refresh").addEventListener("click", async () => { await loadDashboard({ force: true }); await loadPrograms(); });
   document.querySelector("#settings-refresh").addEventListener("click", loadSettings);
   document.querySelector("#export-reviews").addEventListener("click", exportReviews);
   document.querySelector("#profile-followup-form").addEventListener("submit", (event) => {

@@ -3,6 +3,18 @@
 SET XACT_ABORT ON;
 GO
 
+IF OBJECT_ID('dbo.SchemaVersion', 'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.SchemaVersion (
+        Version int NOT NULL,
+        Name nvarchar(100) NOT NULL,
+        ChecksumSha256 char(64) NOT NULL,
+        AppliedAt datetimeoffset(3) NOT NULL CONSTRAINT DF_SchemaVersion_AppliedAt DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT PK_SchemaVersion PRIMARY KEY (Version)
+    );
+END;
+GO
+
 IF OBJECT_ID('dbo.ModelRelease', 'U') IS NULL
 BEGIN
     CREATE TABLE dbo.ModelRelease (

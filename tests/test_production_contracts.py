@@ -208,7 +208,7 @@ def test_azure_manifests_load_with_azure_ml_sdk():
             load_online_endpoint,
         )
 
-        assert load_job(ROOT / "azure" / "components" / "job.yaml").display_name == "sat-fumc-lightgbm-training"
+        assert load_job(ROOT / "azure" / "components" / "job.yaml").display_name == "sat-fumc-lightgbm-training-100k"
         assert load_job(ROOT / "azure" / "components" / "scoring_job.yaml").display_name == "sat-fumc-multiagent-scoring"
         assert load_environment(ROOT / "azure" / "environments" / "online-environment.yaml").name == "sat-fumc-online"
         assert load_online_endpoint(ROOT / "azure" / "endpoints" / "endpoint.yaml").name == "sat-fumc-endpoint"

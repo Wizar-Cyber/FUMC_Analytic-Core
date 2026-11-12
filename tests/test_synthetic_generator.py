@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 GENERATOR = ROOT / "src" / "data_generation" / "generate_digital_twin.py"
 
 
-def _generate(tmp_path, *, students=300, scenario="baseline", seed=42):
+def _generate(tmp_path, *, students=300, scenario="baseline", seed=42, config=None):
     output = tmp_path / "dataset"
     environment = os.environ.copy()
     environment.update(
@@ -22,6 +22,8 @@ def _generate(tmp_path, *, students=300, scenario="baseline", seed=42):
             "SAT_OUTPUT_DIR": str(output),
         }
     )
+    if config is not None:
+        environment["SAT_SYNTHETIC_CONFIG"] = str(config)
     subprocess.run(
         [sys.executable, str(GENERATOR)],
         check=True,
@@ -48,7 +50,7 @@ def test_generator_writes_future_mature_targets_and_reproducibility_manifest(tmp
     immature = merged[~merged["target_observado"]]
 
     assert manifest["students_observed"] == 300
-    assert manifest["generator_version"] == "2.0.0"
+    assert manifest["generator_version"] == "2.1.0"
     assert manifest["dataset_version"]
     assert manifest["parquet_sha256"]
     assert set(mature["target_desercion"].dropna().unique()) == {0, 1}
@@ -93,3 +95,27 @@ def test_generator_refuses_nonempty_output_directory_without_explicit_override(t
     assert result.returncode != 0
     assert "ya contiene archivos" in result.stderr
     assert (output / "keep.txt").read_text(encoding="utf-8") == "preserve"
+
+
+def _final_period_prevalence_gap(output):
+    target = pd.read_parquet(output / "target_trazabilidad.parquet")
+    target = target[target["target_observado"]]
+    by_period = target.groupby("periodo_id")["target_desercion"].mean().sort_index()
+    return float(by_period.iloc[-2:].mean() - by_period.iloc[:-2].mean())
+
+
+def test_aligned_followup_keeps_label_prevalence_stationary_in_final_periods(tmp_path):
+    aligned = _generate(tmp_path / "aligned", students=1500)
+    legacy_config = json.loads(
+        (ROOT / "configs" / "synthetic_data.json").read_text(encoding="utf-8")
+    )
+    legacy_config["followup_alignment"] = "legacy"
+    legacy_path = tmp_path / "legacy.json"
+    legacy_path.write_text(json.dumps(legacy_config), encoding="utf-8")
+    legacy = _generate(tmp_path / "legacy", students=1500, config=legacy_path)
+
+    aligned_gap = _final_period_prevalence_gap(aligned)
+    legacy_gap = _final_period_prevalence_gap(legacy)
+
+    assert abs(aligned_gap) < 0.04
+    assert legacy_gap > 0.05

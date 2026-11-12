@@ -1,10 +1,11 @@
 {
-  "generator_version": "2.0.0",
+  "generator_version": "2.1.0",
   "students": 30000,
   "seed": 42,
   "start_period": "2021-1",
   "period_count": 10,
   "outcome_followup_periods": 2,
+  "followup_alignment": "aligned",
   "cohort_start_periods": 4,
   "max_snapshot_rows": 1000000,
   "scenario": "baseline",

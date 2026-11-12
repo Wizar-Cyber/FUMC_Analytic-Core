@@ -9,23 +9,27 @@ command: >-
   --max_depth ${{inputs.max_depth}}
   --num_leaves ${{inputs.num_leaves}}
   --minimum_recall ${{inputs.minimum_recall}}
+  --max_alert_rate ${{inputs.max_alert_rate}}
   --register_model
 inputs:
   data_folder:
     type: uri_folder
-    path: ../../data/raw
+    path: azureml:sat-fumc-synthetic-100k:1
   n_estimators: 350
   learning_rate: 0.04
   max_depth: 7
   num_leaves: 31
   minimum_recall: 0.80
+  max_alert_rate: 0.50
 outputs:
   output_folder:
     type: uri_folder
 environment:
   image: mcr.microsoft.com/azureml/openmpi4.1.0-ubuntu22.04:latest
   conda_file: ../environments/conda.yaml
-compute: azureml:cpu-cluster
-display_name: sat-fumc-lightgbm-training
+resources:
+  instance_type: Standard_DS3_v2
+  instance_count: 1
+display_name: sat-fumc-lightgbm-training-100k
 experiment_name: SAT-FUMC-Desercion-Foundry
-description: Pipeline de entrenamiento del modelo único LightGBM para predicción de deserción en FUMC.
+description: Entrenamiento LightGBM sobre datos sintéticos (100k estudiantes); no es validación institucional.

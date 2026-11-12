@@ -12,3 +12,4 @@ pytest>=8,<10
 scikit-learn>=1.4,<2
 shap>=0.44,<1
 xgboost>=2,<4
+pyodbc>=5.1,<6

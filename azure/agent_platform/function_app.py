@@ -43,6 +43,8 @@ from sat_agents.contracts import (
     parse_agent_result,
     parse_approval,
 )
+from sat_agents import audit_sql, batch_flow
+from sat_agents.executive import build_executive_view
 from sat_agents.reviews import record_approval, save_pending_review
 from sat_agents.reviews import (
     _public_review,
@@ -64,8 +66,10 @@ from sat_agents.synthetic_database import (
     claim_synthetic_cases,
     create_synthetic_followup,
     get_database_summary,
+    claim_auto_analysis,
     get_pending_synthetic_cases,
     get_poc_enabled,
+    get_synthetic_case_for_student,
     get_synthetic_dashboard,
     get_synthetic_student,
     list_synthetic_alerts,
@@ -232,6 +236,40 @@ async def _require_poc_enabled() -> None:
         raise RuntimeError("El procesamiento de la POC está pausado.")
 
 
+async def _send_queue_messages(queue_name: str, messages: list[tuple[dict[str, Any], str]]) -> None:
+    """Envía varios mensajes por una sola conexión, partiéndolos en lotes del tamaño permitido."""
+    if not messages:
+        return
+    from azure.identity.aio import DefaultAzureCredential
+    from azure.servicebus import ServiceBusMessage
+    from azure.servicebus.aio import ServiceBusClient
+
+    namespace = os.environ.get("SERVICEBUS_NAMESPACE")
+    if not namespace:
+        raise RuntimeError("Configure SERVICEBUS_NAMESPACE.")
+    async with DefaultAzureCredential() as credential:
+        async with ServiceBusClient(
+            fully_qualified_namespace=namespace,
+            credential=credential,
+        ) as client:
+            async with client.get_queue_sender(queue_name) as sender:
+                batch = await sender.create_message_batch()
+                for body, message_id in messages:
+                    message = ServiceBusMessage(
+                        json.dumps(body, ensure_ascii=False),
+                        message_id=message_id,
+                        content_type="application/json",
+                    )
+                    try:
+                        batch.add_message(message)
+                    except ValueError:
+                        await sender.send_messages(batch)
+                        batch = await sender.create_message_batch()
+                        batch.add_message(message)
+                if len(batch):
+                    await sender.send_messages(batch)
+
+
 async def _send_queue_message(queue_name: str, body: dict[str, Any], message_id: str):
     from azure.identity.aio import DefaultAzureCredential
     from azure.servicebus import ServiceBusMessage
@@ -373,6 +411,18 @@ def list_model_feedback(req: func.HttpRequest) -> func.HttpResponse:
     )
 
 
+_REVIEWS_CACHE: dict[str, Any] = {"at": 0.0, "value": None}
+
+
+async def _cached_reviews() -> dict[str, Any]:
+    """Resumen de revisiones (listado de blobs) cacheado 60 s; antes se listaba en cada carga."""
+    import time
+
+    if _REVIEWS_CACHE["value"] is None or time.monotonic() - _REVIEWS_CACHE["at"] > 60:
+        _REVIEWS_CACHE.update(at=time.monotonic(), value=await list_reviews())
+    return _REVIEWS_CACHE["value"]
+
+
 @app.route(route="api/poc/dashboard", methods=["GET"])
 async def get_synthetic_dashboard_api(req: func.HttpRequest) -> func.HttpResponse:
     request = req
@@ -387,8 +437,11 @@ async def get_synthetic_dashboard_api(req: func.HttpRequest) -> func.HttpRespons
         dashboard = await get_synthetic_dashboard(
             campus=request.params.get("campus", ""),
             program=request.params.get("program", ""),
+            faculty=request.params.get("faculty", ""),
+            semester=request.params.get("semester", ""),
+            risk=request.params.get("risk", ""),
         )
-        reviews = await list_reviews()
+        reviews = await _cached_reviews()
         dashboard["review_aggregate"] = reviews.get("aggregate", {})
         dashboard["pending_reviews"] = reviews.get("pending_reviews", [])
         dashboard["pending_truncated"] = reviews.get("pending_truncated", False)
@@ -399,10 +452,13 @@ async def get_synthetic_dashboard_api(req: func.HttpRequest) -> func.HttpRespons
             status_code=200,
             mimetype="application/json",
         )
+    except ValueError as error:
+        return func.HttpResponse(str(error), status_code=400)
     except RuntimeError as error:
         return func.HttpResponse(str(error), status_code=503)
     except Exception:
-        return func.HttpResponse("No se pudo cargar el dashboard sintético.", status_code=503)
+        logger.exception("No se pudo cargar el dashboard.")
+        return func.HttpResponse("No se pudo cargar el dashboard.", status_code=503)
 
 
 @app.route(route="api/poc/alerts", methods=["GET"])
@@ -421,6 +477,9 @@ async def list_synthetic_alerts_api(req: func.HttpRequest) -> func.HttpResponse:
             limit=int(request.params.get("limit", "100")),
             campus=request.params.get("campus", ""),
             program=request.params.get("program", ""),
+            faculty=request.params.get("faculty", ""),
+            semester=request.params.get("semester", ""),
+            risk=request.params.get("risk", ""),
         )
     except ValueError as error:
         return func.HttpResponse(str(error), status_code=400)
@@ -480,6 +539,7 @@ async def list_synthetic_followups_api(req: func.HttpRequest) -> func.HttpRespon
         items = await list_synthetic_followups(
             status=request.params.get("status", "active"),
             limit=int(request.params.get("limit", "100")),
+            student_id=request.params.get("student_id", ""),
         )
     except ValueError as error:
         return func.HttpResponse(str(error), status_code=400)
@@ -529,6 +589,7 @@ async def create_synthetic_followup_api(req: func.HttpRequest) -> func.HttpRespo
         return func.HttpResponse(str(error), status_code=400)
     except Exception:
         return func.HttpResponse("No se pudo crear el seguimiento.", status_code=503)
+    await audit_sql.persist_followup_event(followup, reviewer_id)
     return func.HttpResponse(
         json.dumps({"followup": followup}, ensure_ascii=False),
         status_code=201,
@@ -659,6 +720,15 @@ async def get_synthetic_student_api(req: func.HttpRequest) -> func.HttpResponse:
             result["human_review"] = None
         except RuntimeError as error:
             return func.HttpResponse(str(error), status_code=503)
+    try:
+        followups = await list_synthetic_followups(
+            status="all", limit=100, student_id=student_id
+        )
+    except Exception:  # la vista ejecutiva se degrada sin historial de seguimientos
+        logging.warning("No se pudieron leer los seguimientos de %s.", student_id)
+        followups = []
+    analysis = result.get("analysis_result") or {}
+    result["executive"] = build_executive_view(result, analysis.get("review"), followups)
     return func.HttpResponse(
         json.dumps(result, ensure_ascii=False),
         status_code=200,
@@ -710,16 +780,62 @@ async def set_poc_status(req: func.HttpRequest) -> func.HttpResponse:
         return func.HttpResponse(str(error), status_code=503)
 
 
+class _ServiceBusBatchStarter:
+    """Arranca un lote sin Durable: registra su estado en Tablas y publica un mensaje por agente y caso."""
+
+    async def start_new(self, name: str, *, instance_id: str, client_input: dict[str, Any]) -> None:
+        batch_id = client_input["batch_id"]
+        cases = client_input["cases"]
+        await batch_flow.register_batch(batch_id, cases)
+        queues = (
+            (_QUEUE_SOCIOECONOMIC, "socioeconomic"),
+            (_QUEUE_ACADEMIC, "academic"),
+            (_QUEUE_WELLBEING, "wellbeing"),
+        )
+        normalized = [
+            {
+                "instance_id": item["review_id"],
+                "batch_id": batch_id,
+                "case_id": item["case_id"],
+                "case": AnalysisCase.from_dict(item["case"]).to_dict(),
+            }
+            for item in cases
+        ]
+        # Respuestas de agentes ya obtenidas para el mismo caso (p. ej. si antes falló la
+        # síntesis): se reutilizan en lugar de volver a llamar al modelo.
+        cached = await asyncio.gather(
+            *(batch_flow.load_case_agent_results(body["case_id"]) for body in normalized),
+            return_exceptions=True,
+        )
+        reuse: dict[str, dict[str, Any]] = {}
+        for body, found in zip(normalized, cached):
+            if isinstance(found, dict) and found:
+                reuse[body["instance_id"]] = found
+        await asyncio.gather(
+            *(
+                _send_queue_messages(
+                    queue,
+                    [
+                        (body, f"{body['instance_id']}:{agent}")
+                        for body in normalized
+                        if agent not in reuse.get(body["instance_id"], {})
+                    ],
+                )
+                for queue, agent in queues
+            )
+        )
+        for body in normalized:
+            for agent, result in reuse.get(body["instance_id"], {}).items():
+                await _record_agent_result(batch_id, body["instance_id"], agent, result, case_id=body["case_id"])
+
+
 @app.route(route="api/batches", methods=["POST"])
-@app.durable_client_input(client_name="durable_client")
-async def start_synthetic_batch(
-    req: func.HttpRequest, durable_client: df.DurableOrchestrationClient
-) -> func.HttpResponse:
-    return await _start_synthetic_batch(req, durable_client)
+async def start_synthetic_batch(req: func.HttpRequest) -> func.HttpResponse:
+    return await _start_synthetic_batch(req, _ServiceBusBatchStarter())
 
 
 async def _start_synthetic_batch(
-    req: func.HttpRequest, durable_client: df.DurableOrchestrationClient
+    req: func.HttpRequest, durable_client: Any
 ) -> func.HttpResponse:
     request = req
     try:
@@ -739,17 +855,46 @@ async def _start_synthetic_batch(
         payload = request.get_json() if request.get_body() else {}
     except ValueError:
         return func.HttpResponse("El cuerpo debe ser JSON válido.", status_code=400)
-    if not isinstance(payload, dict) or set(payload) - {"limit"}:
-        return func.HttpResponse("El cuerpo solo puede contener limit.", status_code=400)
+    if not isinstance(payload, dict) or set(payload) - {"limit", "student_id", "auto"}:
+        return func.HttpResponse(
+            "El cuerpo solo puede contener limit, student_id o auto.", status_code=400
+        )
+    if payload.get("auto") is True:
+        try:
+            auto_top_n = int(os.environ.get("AUTO_ANALYZE_TOP_N", str(MAX_BATCH_SIZE)))
+        except ValueError:
+            auto_top_n = 0
+        auto_top_n = max(0, min(auto_top_n, MAX_BATCH_SIZE))
+        if auto_top_n == 0:
+            return func.HttpResponse(
+                "El análisis automático inicial está desactivado (AUTO_ANALYZE_TOP_N=0).",
+                status_code=409,
+            )
+        try:
+            claimed = await claim_auto_analysis()
+        except Exception:
+            return func.HttpResponse("No se pudo verificar el análisis automático.", status_code=503)
+        if not claimed:
+            return func.HttpResponse(
+                "El análisis automático inicial ya se ejecutó para esta cohorte.",
+                status_code=409,
+            )
+        payload = {**payload, "limit": auto_top_n}
     limit = payload.get("limit", MAX_BATCH_SIZE)
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MAX_BATCH_SIZE:
         return func.HttpResponse(
             f"limit debe ser un entero entre 1 y {MAX_BATCH_SIZE}.",
             status_code=400,
         )
+    student_id = payload.get("student_id")
+    if student_id is not None and not isinstance(student_id, str):
+        return func.HttpResponse("student_id debe ser texto.", status_code=400)
 
     try:
-        cases = await get_pending_synthetic_cases(limit)
+        if student_id is not None:
+            cases = [await get_synthetic_case_for_student(student_id)]
+        else:
+            cases = await get_pending_synthetic_cases(limit)
     except RuntimeError as error:
         return func.HttpResponse(str(error), status_code=503)
     except ValueError as error:
@@ -802,7 +947,11 @@ async def _start_synthetic_batch(
             except Exception:
                 logger.exception("No se pudo liberar un caso sintético del lote.")
         await release_evaluation_slot(batch_id)
-        raise
+        logger.exception("No se pudo iniciar el orquestador del lote.")
+        return func.HttpResponse(
+            "No se pudo iniciar el análisis del lote. Revisa Service Bus y las tablas de lotes.",
+            status_code=503,
+        )
 
     return func.HttpResponse(
         json.dumps(
@@ -941,45 +1090,59 @@ def batch_orchestrator(context: df.DurableOrchestrationContext):
     batch_id = batch["batch_id"]
     cases = batch["cases"]
     results = []
+    probabilities = [float(item["case"]["model_probability"]) for item in cases]
+    progress = {
+        "total": len(cases),
+        "done": 0,
+        "failed": 0,
+        "max_probability": max(probabilities),
+        "min_probability": min(probabilities),
+    }
+    context.set_custom_status(progress)
     failed = False
     try:
-        for index, item in enumerate(cases):
-            try:
-                yield context.call_sub_orchestrator(
+        remaining = [
+            (
+                context.call_sub_orchestrator(
                     "analysis_orchestrator",
                     {"case": item["case"], "release_slot": False},
                     instance_id=item["review_id"],
-                )
-            except Exception:
+                ),
+                item,
+            )
+            for item in cases
+        ]
+        while remaining:
+            winner = yield context.task_any([task for task, _ in remaining])
+            position = next(i for i, (task, _) in enumerate(remaining) if task is winner)
+            _, item = remaining.pop(position)
+            if winner.is_faulted:
                 failed = True
                 yield context.call_activity(
                     "update_synthetic_case_status",
                     {"case_id": item["case_id"], "status": "pending"},
                 )
-                for remaining in cases[index + 1 :]:
-                    yield context.call_activity(
-                        "update_synthetic_case_status",
-                        {"case_id": remaining["case_id"], "status": "pending"},
-                    )
                 results.append({"case_id": item["case_id"], "status": "failed"})
-                break
-
-            yield context.call_activity(
-                "update_synthetic_case_status",
-                {
-                    "case_id": item["case_id"],
-                    "status": "processed",
-                    "batch_id": batch_id,
-                    "review_id": item["review_id"],
-                },
-            )
-            results.append(
-                {
-                    "case_id": item["case_id"],
-                    "review_id": item["review_id"],
-                    "status": "processed",
-                }
-            )
+                progress["failed"] += 1
+            else:
+                yield context.call_activity(
+                    "update_synthetic_case_status",
+                    {
+                        "case_id": item["case_id"],
+                        "status": "processed",
+                        "batch_id": batch_id,
+                        "review_id": item["review_id"],
+                    },
+                )
+                results.append(
+                    {
+                        "case_id": item["case_id"],
+                        "review_id": item["review_id"],
+                        "status": "processed",
+                    }
+                )
+            progress["done"] += 1
+            context.set_custom_status(progress)
     finally:
         yield context.call_activity(
             "release_case_slot",
@@ -1047,6 +1210,8 @@ async def socioeconomic_worker(message: func.ServiceBusMessage) -> None:
         _QUEUE_RESULTS,
         {
             "instance_id": payload["instance_id"],
+            "batch_id": payload.get("batch_id"),
+            "case_id": payload.get("case_id"),
             "agent": "socioeconomic",
             "result": result,
         },
@@ -1067,6 +1232,8 @@ async def academic_worker(message: func.ServiceBusMessage) -> None:
         _QUEUE_RESULTS,
         {
             "instance_id": payload["instance_id"],
+            "batch_id": payload.get("batch_id"),
+            "case_id": payload.get("case_id"),
             "agent": "academic",
             "result": result,
         },
@@ -1087,6 +1254,8 @@ async def wellbeing_worker(message: func.ServiceBusMessage) -> None:
         _QUEUE_RESULTS,
         {
             "instance_id": payload["instance_id"],
+            "batch_id": payload.get("batch_id"),
+            "case_id": payload.get("case_id"),
             "agent": "wellbeing",
             "result": result,
         },
@@ -1099,29 +1268,95 @@ async def wellbeing_worker(message: func.ServiceBusMessage) -> None:
     queue_name=_QUEUE_RESULTS,
     connection="ServiceBusConnection",
 )
-@app.durable_client_input(client_name="durable_client")
-async def collect_agent_result(
-    message: func.ServiceBusMessage,
-    durable_client: df.DurableOrchestrationClient,
-) -> None:
+async def collect_agent_result(message: func.ServiceBusMessage) -> None:
     _require_synthetic_mode()
     payload = _decode_message(message)
     agent = payload.get("agent")
     instance_id = payload.get("instance_id")
+    batch_id = payload.get("batch_id")
     if agent not in {"socioeconomic", "academic", "wellbeing"}:
         raise ContractError("El resultado tiene un agente desconocido.")
     if not isinstance(instance_id, str) or not _REVIEW_ID.fullmatch(instance_id):
         raise ContractError("El resultado no contiene un instance_id válido.")
+    if not isinstance(batch_id, str) or not _REVIEW_ID.fullmatch(batch_id):
+        logger.warning("Resultado %s/%s sin batch_id: se ignora (flujo Durable retirado).", instance_id, agent)
+        return
     result = parse_agent_result(agent, payload.get("result"))
-    await durable_client.raise_event(
-        instance_id,
-        f"{agent}_result",
-        result,
-    )
+    await _record_agent_result(batch_id, instance_id, agent, result, case_id=payload.get("case_id"))
+
+
+async def _record_agent_result(
+    batch_id: str, review_id: str, agent: str, result: dict[str, Any], *, case_id: Any = None
+) -> None:
+    """Guarda el resultado de un agente y finaliza el caso cuando llegan los tres."""
+    await batch_flow.store_agent_result(review_id, agent, result)
+    if isinstance(case_id, str) and case_id:
+        try:
+            await batch_flow.store_case_agent_result(case_id, agent, result)
+        except Exception:
+            logger.exception("No se pudo guardar el resultado reutilizable del caso %s.", case_id)
+    results = await batch_flow.load_agent_results(review_id)
+    if set(results) < set(batch_flow.AGENTS):
+        return
+    if not await batch_flow.claim_finalization(review_id):
+        return
+    item = await batch_flow.get_item(batch_id, review_id)
+    if item is None:
+        logger.error("El caso %s no pertenece al lote %s.", review_id, batch_id)
+        return
+    case_id = str(item.get("CaseId"))
+    try:
+        await _build_pending_review(
+            {
+                "review_id": review_id,
+                "case": json.loads(item["CaseJson"]),
+                "socioeconomic": results["socioeconomic"],
+                "academic": results["academic"],
+                "wellbeing": results["wellbeing"],
+            }
+        )
+        await update_synthetic_case_record(case_id, "processed", batch_id=batch_id, review_id=review_id)
+        await batch_flow.mark_item(batch_id, review_id, "processed")
+    except Exception:
+        logger.exception("Falló la síntesis del caso %s.", review_id)
+        try:
+            await update_synthetic_case_record(case_id, "pending")
+        except Exception:
+            logger.exception("No se pudo devolver el caso %s a pendiente.", case_id)
+        await batch_flow.mark_item(batch_id, review_id, "failed")
+    if await batch_flow.complete_batch_if_done(batch_id):
+        await release_evaluation_slot(batch_id)
+
+
+@app.timer_trigger(schedule="30 */4 * * * *", arg_name="timer", run_on_startup=True)
+async def cache_warmer(timer: func.TimerRequest) -> None:
+    """Mantiene caliente la caché de casos y del dashboard para que los filtros respondan en ms."""
+    try:
+        from sat_agents.synthetic_database import refresh_synthetic_cases
+
+        await audit_sql.check_connection_once()
+        await refresh_synthetic_cases()
+        await get_synthetic_dashboard()
+        await _cached_reviews()
+    except Exception:
+        logger.exception("No se pudo precalentar la caché del dashboard.")
+
+
+@app.timer_trigger(schedule="0 */2 * * * *", arg_name="timer", run_on_startup=False)
+async def batch_reaper(timer: func.TimerRequest) -> None:
+    """Cierra lotes que superaron el tiempo máximo para que no retengan cupos ni casos."""
+    for batch_id in await batch_flow.stale_running_batches():
+        logger.warning("Lote %s superó el tiempo máximo; se marcan como fallidos los casos sin resultado.", batch_id)
+        if await batch_flow.fail_unfinished(batch_id):
+            await release_evaluation_slot(batch_id)
 
 
 @app.activity_trigger(input_name="data")
 async def create_pending_review(data: dict) -> dict[str, Any]:
+    return await _build_pending_review(data)
+
+
+async def _build_pending_review(data: dict[str, Any]) -> dict[str, Any]:
     _require_synthetic_mode()
     case = AnalysisCase.from_dict(data["case"])
     socioeconomic = data["socioeconomic"]
@@ -1167,6 +1402,7 @@ async def create_pending_review(data: dict) -> dict[str, Any]:
         "cost_estimate": usage_report["cost_estimate"],
     }
     await save_pending_review(data["review_id"], proposal)
+    await audit_sql.persist_pending_review(proposal)
     return proposal
 
 
@@ -1281,10 +1517,7 @@ async def get_case_status(
 
 
 @app.route(route="api/batches/{batch_id}", methods=["GET"])
-@app.durable_client_input(client_name="durable_client")
-async def get_batch_status(
-    req: func.HttpRequest, durable_client: df.DurableOrchestrationClient
-) -> func.HttpResponse:
+async def get_batch_status(req: func.HttpRequest) -> func.HttpResponse:
     request = req
     if os.environ.get("DATA_MODE") != "synthetic":
         return func.HttpResponse("La app solo admite DATA_MODE=synthetic.", status_code=503)
@@ -1294,20 +1527,29 @@ async def get_batch_status(
     batch_id = request.route_params.get("batch_id", "")
     if not _REVIEW_ID.fullmatch(batch_id):
         return func.HttpResponse("batch_id no válido.", status_code=400)
-    status = await durable_client.get_status(batch_id, show_input=False)
-    if status is None:
+    try:
+        batch = await batch_flow.get_batch(batch_id)
+    except Exception:
+        logger.exception("No se pudo consultar el lote %s.", batch_id)
+        return func.HttpResponse("No se pudo consultar el estado del lote.", status_code=503)
+    if batch is None:
         return func.HttpResponse("No existe el lote.", status_code=404)
-    runtime_status = getattr(status.runtime_status, "value", status.runtime_status)
-    output = status.output if isinstance(status.output, dict) else {}
     return func.HttpResponse(
         json.dumps(
             {
                 "batchId": batch_id,
-                "runtimeStatus": str(runtime_status),
-                "status": output.get("status"),
-                "processedCount": output.get("processed_count", 0),
-                "failedCount": output.get("failed_count", 0),
-                "results": output.get("results", []),
+                "runtimeStatus": "Running" if batch["running"] else "Completed",
+                "progress": {
+                    "total": batch["total"],
+                    "done": batch["done"],
+                    "failed": batch["failed"],
+                    "maxProbability": batch["max_probability"],
+                    "minProbability": batch["min_probability"],
+                },
+                "status": batch["status"],
+                "processedCount": batch["processed"],
+                "failedCount": batch["failed"],
+                "results": batch["results"],
             },
             ensure_ascii=False,
         ),
@@ -1478,6 +1720,7 @@ async def approve_review(req: func.HttpRequest) -> func.HttpResponse:
             "No se pudo guardar la decisión de revisión.", status_code=503
         )
 
+    await audit_sql.persist_decision(review_id, reviewer_id, approval, followup)
     logger.info("Aprobación registrada para review_id=%s", review_id)
     return func.HttpResponse(
         json.dumps(

@@ -6,7 +6,14 @@ from dataclasses import dataclass
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
-from .policy import ALLOWED_FOLLOWUP_ACTIONS
+from .policy import (
+    ALLOWED_FOLLOWUP_ACTIONS,
+    MAX_AGENT_LIMITATIONS,
+    MAX_AGENT_OBSERVATION_CHARS,
+    MAX_AGENT_OBSERVATIONS,
+    MAX_AGENT_SUMMARY_CHARS,
+    MAX_SYNTHESIS_WORDS,
+)
 
 
 class ContractError(ValueError):
@@ -245,6 +252,62 @@ class AnalysisCase:
         }
 
 
+_ANALYSIS_FIELDS = ("summary", "observations", "limitations", "citation_ids")
+
+
+def _shorten(value: str, limit: int) -> str:
+    value = " ".join(value.split())
+    if len(value) <= limit:
+        return value
+    cut = value[: limit - 1].rsplit(" ", 1)[0].rstrip(" ,;:.")
+    return f"{cut or value[: limit - 1]}…"
+
+
+def _limit_words(value: str, limit: int) -> str:
+    words = value.split()
+    if len(words) <= limit:
+        return " ".join(words)
+    return " ".join(words[:limit]).rstrip(" ,;:.") + "…"
+
+
+def sanitize_analysis_text(text: str) -> str:
+    """Ajusta la salida de un analista al esquema antes de la validación estricta.
+
+    Los modelos de razonamiento suelen exceder los topes de longitud o añadir campos propios.
+    Aquí solo se recortan textos largos y se descartan campos ajenos al análisis (un analista
+    no emite recomendaciones); cualquier otro defecto sigue siendo un error de contrato.
+    """
+    import json
+
+    try:
+        payload = json.loads(text)
+    except (TypeError, json.JSONDecodeError):
+        return text
+    if not isinstance(payload, dict):
+        return text
+    cleaned: dict[str, Any] = {key: payload[key] for key in _ANALYSIS_FIELDS if key in payload}
+    if isinstance(cleaned.get("summary"), str):
+        cleaned["summary"] = _shorten(cleaned["summary"], MAX_AGENT_SUMMARY_CHARS)
+    caps = {
+        "observations": MAX_AGENT_OBSERVATIONS,
+        "limitations": MAX_AGENT_LIMITATIONS,
+    }
+    for key, max_items in caps.items():
+        values = cleaned.get(key)
+        if isinstance(values, str):
+            values = cleaned[key] = [values]
+        if isinstance(values, list):
+            unique: list[str] = []
+            for item in values:
+                if not isinstance(item, str) or not item.strip():
+                    continue
+                text = _shorten(item, MAX_AGENT_OBSERVATION_CHARS)
+                if text.casefold() not in {seen.casefold() for seen in unique}:
+                    unique.append(text)
+            cleaned[key] = unique[:max_items]
+    return json.dumps(cleaned, ensure_ascii=False)
+
+
 def parse_analysis_response(
     text: str, allowed_citation_ids: set[str] | None = None
 ) -> dict[str, Any]:
@@ -363,6 +426,74 @@ def _parse_token_usage(value: Any) -> dict[str, int]:
     if counts["input_tokens"] + counts["output_tokens"] != counts["total_tokens"]:
         raise ContractError("'token_usage.total_tokens' no coincide con sus partes.")
     return counts
+
+
+_ACTION_HINTS = (
+    ("tutoring_review", ("tutor",)),
+    ("financial_aid_review", ("financ", "beca", "pago", "credito", "crédito", "mora")),
+    ("wellbeing_review", ("bienestar", "wellbeing", "psico", "acompañamiento emocional")),
+    ("academic_advisor_review", ("asesor", "academic", "académ", "docente", "consejer")),
+)
+
+
+def _normalize_action(value: Any) -> str | None:
+    if isinstance(value, Mapping):
+        value = next(
+            (value.get(key) for key in ("action", "id", "code", "type", "name") if isinstance(value.get(key), str)),
+            None,
+        )
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if text in _PROPOSED_ACTIONS:
+        return text
+    lowered = text.casefold()
+    for action, hints in _ACTION_HINTS:
+        if action in _PROPOSED_ACTIONS and any(hint in lowered for hint in hints):
+            return action
+    return None
+
+
+def sanitize_recommendation_text(text: str) -> str:
+    """Ajusta la salida del sintetizador al esquema antes de la validación estricta.
+
+    Las acciones solo pueden ser las cuatro permitidas: se aceptan los códigos exactos y se
+    reconocen sus equivalentes en texto (p. ej. "Tutoría" -> tutoring_review); lo demás se
+    descarta. Se recortan textos largos y se ignoran campos ajenos al esquema.
+    """
+    import json
+
+    try:
+        payload = json.loads(text)
+    except (TypeError, json.JSONDecodeError):
+        return text
+    if not isinstance(payload, dict):
+        return text
+    cleaned: dict[str, Any] = {key: payload[key] for key in ("summary", "proposed_actions", "limitations") if key in payload}
+    if isinstance(cleaned.get("summary"), str):
+        cleaned["summary"] = _shorten(
+            _limit_words(cleaned["summary"], MAX_SYNTHESIS_WORDS), 1200
+        )
+    actions = cleaned.get("proposed_actions")
+    if isinstance(actions, (str, Mapping)):
+        actions = [actions]
+    if isinstance(actions, list):
+        normalized: list[str] = []
+        for item in actions:
+            action = _normalize_action(item)
+            if action and action not in normalized:
+                normalized.append(action)
+        cleaned["proposed_actions"] = normalized[:4]
+    limitations = cleaned.get("limitations")
+    if isinstance(limitations, str):
+        limitations = [limitations]
+    if isinstance(limitations, list):
+        cleaned["limitations"] = [
+            _shorten(item, MAX_AGENT_OBSERVATION_CHARS)
+            for item in limitations
+            if isinstance(item, str) and item.strip()
+        ][:MAX_AGENT_LIMITATIONS]
+    return json.dumps(cleaned, ensure_ascii=False)
 
 
 def parse_recommendation_response(text: str) -> dict[str, Any]:

@@ -87,6 +87,40 @@ def require_feature_schema(data: pd.DataFrame) -> None:
         raise ValueError(f"Faltan variables requeridas por el contrato de entrenamiento: {missing}")
 
 
+def join_mature_targets(
+    predictors: pd.DataFrame,
+    target: pd.DataFrame,
+) -> pd.DataFrame:
+    """Join only observed forward outcomes; never coerce censored labels to zero."""
+    key_columns = ["id_estudiante_anon", "periodo_id"]
+    required = {*key_columns, "target_desercion"}
+    missing = sorted(required - set(target.columns))
+    if missing:
+        raise ValueError(f"Faltan columnas requeridas en target: {missing}")
+    mature_mask = (
+        target["target_observado"].fillna(False).astype(bool)
+        if "target_observado" in target
+        else pd.Series(True, index=target.index)
+    )
+    mature_target = target.loc[mature_mask, [*key_columns, "target_desercion"]]
+    if mature_target.empty:
+        raise ValueError("No hay etiquetas maduras disponibles para entrenar.")
+    labels = mature_target["target_desercion"]
+    if labels.isna().any() or not labels.isin([0, 1]).all():
+        raise ValueError("Las etiquetas maduras deben ser binarias y no nulas.")
+    if mature_target.duplicated(key_columns).any():
+        raise ValueError("El target maduro tiene llaves estudiante-periodo duplicadas.")
+    joined = predictors.merge(
+        mature_target,
+        on=key_columns,
+        how="inner",
+        validate="one_to_one",
+    )
+    if joined.empty:
+        raise ValueError("No hay predictores que coincidan con targets maduros.")
+    return joined
+
+
 def temporal_holdout(
     data: pd.DataFrame,
     test_periods: list[str] | None = None,
@@ -113,3 +147,167 @@ def temporal_holdout(
         raise ValueError(f"Los periodos de prueba no existen en los datos: {missing}")
     test_mask = data["periodo_id"].astype(str).isin(selected)
     return ~test_mask, test_mask, list(selected)
+
+
+def temporal_group_holdout(
+    data: pd.DataFrame,
+    *,
+    student_column: str = "id_estudiante_anon",
+    test_periods: list[str] | None = None,
+    number_of_test_periods: int = 2,
+    test_fraction: float = 0.20,
+    random_state: int = 42,
+) -> tuple[pd.Series, pd.Series, list[str]]:
+    """Hold out future periods for unseen students; exclude held-out identities from fit.
+
+    The test set contains selected students only in the latest periods. Their
+    earlier records are excluded from training, and other students' records in
+    the test periods are not reused for training. This is intentionally stricter
+    than a period-only split and simulates prospective generalization.
+    """
+    if student_column not in data:
+        raise ValueError(f"Falta la llave de grupo requerida: {student_column}.")
+    if data[student_column].isna().any():
+        raise ValueError(f"La llave de grupo {student_column} contiene valores nulos.")
+    if not 0 < test_fraction < 1:
+        raise ValueError("test_fraction debe estar entre 0 y 1.")
+
+    test_period_mask, _, selected = temporal_holdout(
+        data,
+        test_periods=test_periods,
+        number_of_test_periods=number_of_test_periods,
+    )
+    test_period_mask = ~test_period_mask
+    candidate_students = np.asarray(
+        data.loc[test_period_mask, student_column].astype(str).unique()
+    )
+    if candidate_students.size < 2:
+        raise ValueError("Se requieren al menos dos estudiantes en los periodos de holdout.")
+
+    rng = np.random.default_rng(random_state)
+    shuffled_students = rng.permutation(candidate_students)
+    test_count = min(
+        candidate_students.size - 1,
+        max(1, int(np.ceil(candidate_students.size * test_fraction))),
+    )
+    heldout_students = set(shuffled_students[:test_count].tolist())
+    student_mask = data[student_column].astype(str).isin(heldout_students)
+
+    test_mask = test_period_mask & student_mask
+    train_mask = ~test_period_mask & ~student_mask
+    if not train_mask.any() or not test_mask.any():
+        raise ValueError("El split temporal/grupal produjo train o test vacío.")
+    return train_mask, test_mask, selected
+
+
+def temporal_group_train_validation_test_split(
+    data: pd.DataFrame,
+    *,
+    student_column: str = "id_estudiante_anon",
+    test_periods: list[str] | None = None,
+    number_of_test_periods: int = 2,
+    number_of_validation_periods: int = 1,
+    test_student_fraction: float = 0.20,
+    validation_student_fraction: float = 0.20,
+    random_state: int = 42,
+) -> tuple[pd.Series, pd.Series, pd.Series, pd.Series, list[str], list[str]]:
+    """Create student-disjoint fit, validation, and future test partitions.
+
+    Test identities are sampled from the latest test periods and excluded from
+    all earlier data. Validation identities are sampled from a preceding period
+    and excluded from fit. The final training mask includes fit and validation
+    data, but never test identities or test periods.
+    """
+    required = {"periodo_id", student_column}
+    missing_columns = required - set(data.columns)
+    if missing_columns:
+        raise ValueError(f"Faltan columnas para el split: {sorted(missing_columns)}")
+    if data[list(required)].isna().any().any():
+        raise ValueError("El split temporal/grupal no admite llaves nulas.")
+    if number_of_test_periods < 1 or number_of_validation_periods < 1:
+        raise ValueError("Debe reservarse al menos un periodo de test y validación.")
+    if not 0 < test_student_fraction < 1 or not 0 < validation_student_fraction < 1:
+        raise ValueError("Las fracciones de estudiantes deben estar entre 0 y 1.")
+
+    def period_order(period: str) -> tuple[int, int]:
+        try:
+            year, semester = str(period).split("-", maxsplit=1)
+            semester_number = int(semester)
+            if semester_number not in (1, 2):
+                raise ValueError
+            return int(year), semester_number
+        except (ValueError, TypeError) as error:
+            raise ValueError(f"Formato de periodo no válido: {period!r}; use YYYY-S.") from error
+
+    periods = sorted(data["periodo_id"].astype(str).unique(), key=period_order)
+    minimum_periods = number_of_test_periods + number_of_validation_periods + 1
+    if len(periods) < minimum_periods:
+        raise ValueError(
+            f"Se requieren al menos {minimum_periods} periodos para fit, validation y test."
+        )
+    selected_test_periods = test_periods or periods[-number_of_test_periods:]
+    if not selected_test_periods or not set(selected_test_periods).issubset(periods):
+        raise ValueError("Los periodos de test deben existir en el dataset.")
+    earliest_test_order = min(period_order(period) for period in selected_test_periods)
+    periods_before_test = [
+        period for period in periods if period_order(period) < earliest_test_order
+    ]
+    if len(periods_before_test) < number_of_validation_periods + 1:
+        raise ValueError("No hay suficientes periodos previos para fit y validation.")
+    validation_periods = periods_before_test[-number_of_validation_periods:]
+    validation_start = min(validation_periods, key=period_order)
+
+    test_period_rows = data["periodo_id"].astype(str).isin(selected_test_periods)
+    test_candidates = data.loc[test_period_rows, student_column].astype(str).unique()
+    if test_candidates.size < 2:
+        raise ValueError("Se requieren al menos dos estudiantes en el periodo de test.")
+    rng = np.random.default_rng(random_state)
+    shuffled_test = rng.permutation(test_candidates)
+    test_count = min(test_candidates.size - 1, max(1, int(np.ceil(test_candidates.size * test_student_fraction))))
+    test_students = set(shuffled_test[:test_count].tolist())
+
+    validation_period_rows = data["periodo_id"].astype(str).isin(validation_periods)
+    validation_candidates = data.loc[
+        validation_period_rows
+        & ~data[student_column].astype(str).isin(test_students),
+        student_column,
+    ].astype(str).unique()
+    if validation_candidates.size < 2:
+        raise ValueError("Se requieren al menos dos estudiantes candidatos a validación.")
+    shuffled_validation = rng.permutation(validation_candidates)
+    validation_count = min(
+        validation_candidates.size - 1,
+        max(1, int(np.ceil(validation_candidates.size * validation_student_fraction))),
+    )
+    validation_students = set(shuffled_validation[:validation_count].tolist())
+
+    identities = data[student_column].astype(str)
+    period_ids = data["periodo_id"].astype(str)
+    period_ordinals = period_ids.map(
+        lambda value: period_order(value)[0] * 2 + period_order(value)[1]
+    )
+    validation_start_ordinal = (
+        period_order(validation_start)[0] * 2
+        + period_order(validation_start)[1]
+    )
+    test_mask = test_period_rows & identities.isin(test_students)
+    validation_mask = validation_period_rows & identities.isin(validation_students)
+    fit_mask = (
+        period_ordinals < validation_start_ordinal
+    ) & ~identities.isin(test_students | validation_students)
+    train_mask = ~test_period_rows & ~identities.isin(test_students)
+
+    if not fit_mask.any() or not validation_mask.any() or not test_mask.any():
+        raise ValueError("El split temporal/grupal produjo una partición vacía.")
+    if not set(identities[fit_mask]).isdisjoint(identities[validation_mask]):
+        raise AssertionError("Hay estudiantes compartidos entre ajuste y validación.")
+    if not set(identities[fit_mask | validation_mask]).isdisjoint(identities[test_mask]):
+        raise AssertionError("Hay estudiantes compartidos entre desarrollo y test.")
+    return (
+        fit_mask,
+        validation_mask,
+        train_mask,
+        test_mask,
+        validation_periods,
+        list(selected_test_periods),
+    )

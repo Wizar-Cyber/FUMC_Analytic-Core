@@ -24,6 +24,28 @@ SHARED_AGENT_RULES: Final = """Reglas comunes de la red SAT:
 - Para datos institucionales, las recomendaciones son apoyo profesional y requieren los controles y validaciones institucionales antes de cualquier uso operativo.
 """
 
+# Los agentes son motores internos: su salida se consolida en una vista ejecutiva y
+# nunca se presenta tal cual. Por eso se exige telegráfico y acotado.
+MAX_AGENT_OBSERVATIONS: Final = 3
+MAX_AGENT_OBSERVATION_CHARS: Final = 160
+MAX_AGENT_SUMMARY_CHARS: Final = 240
+MAX_AGENT_LIMITATIONS: Final = 1
+MAX_SYNTHESIS_WORDS: Final = 150
+
+ANALYST_BREVITY_RULES: Final = f"""Formato obligatorio de salida:
+- summary: una sola frase, máximo {MAX_AGENT_SUMMARY_CHARS} caracteres.
+- observations: máximo {MAX_AGENT_OBSERVATIONS} hallazgos, cada uno de máximo {MAX_AGENT_OBSERVATION_CHARS} caracteres, en estilo telegráfico con la evidencia numérica (p. ej. "Mora de 2 meses, saldo $1.347.388").
+- limitations: máximo {MAX_AGENT_LIMITATIONS} elemento, solo si falta un dato clave.
+- Sin introducciones, sin explicar el modelo ni tu razonamiento, sin repetir datos, sin nombres de campos ni de variables.
+"""
+
+SYNTHESIS_BREVITY_RULES: Final = f"""Formato obligatorio de salida:
+- summary: un solo párrafo de 40 a {MAX_SYNTHESIS_WORDS} palabras que explique el riesgo del estudiante, dirigido a directivos; sin explicar el modelo, los agentes ni la IA.
+- No enumeres cada informe por separado; fusiona los hallazgos coincidentes en una sola explicación.
+- proposed_actions: solo códigos permitidos, ordenados por prioridad, sin duplicados.
+- limitations: máximo {MAX_AGENT_LIMITATIONS} elemento.
+"""
+
 
 def classify_risk(probability: float) -> str:
     if probability >= RISK_HIGH_THRESHOLD:

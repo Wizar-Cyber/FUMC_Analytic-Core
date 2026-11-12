@@ -28,6 +28,12 @@ param sqlAdminLogin string = 'satadmin'
 @description('Administrator password for the Azure SQL operational database. Supply directly at deployment time.')
 param sqlAdminPassword string
 
+@description('UPN of the Microsoft Entra admin for Azure SQL. When set together with the object id, SQL authentication is disabled (Entra-only).')
+param sqlEntraAdminLogin string = ''
+
+@description('Object id of the Microsoft Entra admin for Azure SQL.')
+param sqlEntraAdminObjectId string = ''
+
 @description('Azure SQL logical server name.')
 param sqlServerName string = 'satfumc-sql-${uniqueString(resourceGroup().id)}'
 
@@ -125,12 +131,15 @@ resource sqlDatabase 'Microsoft.Sql/servers/databases@2023-08-01-preview' = {
   name: sqlDatabaseName
   location: location
   sku: {
-    name: 'Basic'
-    tier: 'Basic'
-    capacity: 5
+    name: 'GP_S_Gen5_1'
+    tier: 'GeneralPurpose'
+    family: 'Gen5'
+    capacity: 1
   }
   properties: {
     collation: 'SQL_Latin1_General_CP1_CI_AS'
+    autoPauseDelay: 60
+    minCapacity: json('0.5')
     maxSizeBytes: 2147483648
     zoneRedundant: false
     readScale: 'Disabled'
@@ -143,7 +152,29 @@ resource sqlAzureServicesFirewall 'Microsoft.Sql/servers/firewallRules@2023-08-0
   name: 'AllowAzureServices'
   properties: {
     startIpAddress: '0.0.0.0'
-    endIpAddress: '255.255.255.255'
+    endIpAddress: '0.0.0.0'
+  }
+}
+
+resource sqlEntraAdmin 'Microsoft.Sql/servers/administrators@2023-08-01-preview' = if (!empty(sqlEntraAdminLogin) && !empty(sqlEntraAdminObjectId)) {
+  parent: sqlServer
+  name: 'ActiveDirectory'
+  properties: {
+    administratorType: 'ActiveDirectory'
+    login: sqlEntraAdminLogin
+    sid: sqlEntraAdminObjectId
+    tenantId: entraTenantId
+  }
+}
+
+resource sqlEntraOnly 'Microsoft.Sql/servers/azureADOnlyAuthentications@2023-08-01-preview' = if (!empty(sqlEntraAdminLogin) && !empty(sqlEntraAdminObjectId)) {
+  parent: sqlServer
+  name: 'Default'
+  dependsOn: [
+    sqlEntraAdmin
+  ]
+  properties: {
+    azureADOnlyAuthentication: true
   }
 }
 
@@ -206,7 +237,7 @@ resource openAiDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024
   name: openAiDeploymentName
   sku: {
     name: 'GlobalStandard'
-    capacity: 5
+    capacity: 50
   }
   properties: {
     model: {
@@ -345,6 +376,9 @@ resource functionAppSettings 'Microsoft.Web/sites/config@2024-11-01' = {
     REVIEWER_AUTH_ENFORCED: 'true'
     REVIEWS_CONTAINER: reviewContainer.name
     SERVICEBUS_NAMESPACE: '${serviceBusNamespace.name}.servicebus.windows.net'
+    SQL_PERSISTENCE_ENABLED: 'true'
+    SQL_SERVER: sqlServer.properties.fullyQualifiedDomainName
+    SQL_DATABASE: sqlDatabase.name
     ServiceBusConnection__fullyQualifiedNamespace: '${serviceBusNamespace.name}.servicebus.windows.net'
     ACADEMIC_RAG_ENABLED: 'false'
     AZURE_SEARCH_ENDPOINT: ''

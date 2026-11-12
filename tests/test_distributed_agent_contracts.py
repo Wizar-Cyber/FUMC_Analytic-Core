@@ -43,8 +43,15 @@ from sat_agents.synthetic_database import (  # noqa: E402
     _CITIES,
     _FACULTY_BY_PROGRAM,
     _PROGRAMS,
+    COLD_START_LIMIT,
+    DEFAULT_SYNTHETIC_STUDENT_COUNT,
     MAX_BATCH_SIZE,
     TABLE_ACADEMICS,
+    TABLE_ALERTS,
+    TABLE_CONTROL,
+    TABLE_FOLLOWUPS,
+    TABLE_TRENDS,
+    _ensure_operational_data,
     TABLE_FINANCE,
     TABLE_SNAPSHOTS,
     TABLE_STUDENTS,
@@ -263,17 +270,20 @@ def test_pilot_counter_reserves_bounded_batch_as_one_active_operation():
         )
 
 
-def test_synthetic_database_seed_has_5000_students_and_separate_target_table():
+def test_synthetic_database_seed_has_cold_start_students_and_separate_target_table():
     tables = _generate_entities()
+    expected = min(DEFAULT_SYNTHETIC_STUDENT_COUNT, COLD_START_LIMIT)
 
-    assert len(tables[TABLE_STUDENTS]) == 5000
-    assert len(tables[TABLE_SNAPSHOTS]) == 5000
-    assert len(tables[TABLE_ACADEMICS]) == 15000
-    assert len(tables[TABLE_FINANCE]) == 5000
-    assert len(tables[TABLE_WELLBEING]) == 5000
-    assert len(tables[TABLE_TARGETS]) == 5000
+    assert DEFAULT_SYNTHETIC_STUDENT_COUNT == 20000
+    assert expected == 5000
+    assert len(tables[TABLE_STUDENTS]) == expected
+    assert len(tables[TABLE_SNAPSHOTS]) == expected
+    assert len(tables[TABLE_ACADEMICS]) == expected * 3
+    assert len(tables[TABLE_FINANCE]) == expected
+    assert len(tables[TABLE_WELLBEING]) == expected
+    assert len(tables[TABLE_TARGETS]) == expected
     student_ids = {row["RowKey"] for row in tables[TABLE_STUDENTS]}
-    assert len(student_ids) == 5000
+    assert len(student_ids) == expected
     assert all(row["CaseId"].startswith("syn-") for row in tables[TABLE_SNAPSHOTS])
     assert all("TargetDesercion" not in row for row in tables[TABLE_SNAPSHOTS])
     assert all(
@@ -306,17 +316,95 @@ def test_synthetic_database_seed_has_5000_students_and_separate_target_table():
     assert AnalysisCase.from_dict(case).case_id == snapshot["CaseId"]
 
 
+class _FakeTable:
+    def __init__(self, rows=None):
+        self.rows = {(r["PartitionKey"], r["RowKey"]): dict(r) for r in (rows or [])}
+
+    async def get_entity(self, partition_key, row_key):
+        return dict(self.rows[(partition_key, row_key)])
+
+    async def create_entity(self, entity):
+        from azure.core.exceptions import ResourceExistsError
+
+        key = (entity["PartitionKey"], entity["RowKey"])
+        if key in self.rows:
+            raise ResourceExistsError("exists")
+        self.rows[key] = dict(entity)
+
+    async def upsert_entity(self, entity, mode=None):
+        key = (entity["PartitionKey"], entity["RowKey"])
+        self.rows[key] = {**self.rows.get(key, {}), **entity}
+
+    async def delete_entity(self, partition_key, row_key):
+        self.rows.pop((partition_key, row_key), None)
+
+    def query_entities(self, query_filter):
+        partition = query_filter.split("'")[1]
+
+        async def iterate():
+            for (pk, _), row in list(self.rows.items()):
+                if pk == partition:
+                    yield dict(row)
+
+        return iterate()
+
+
+def test_operational_seed_upgrade_preserves_existing_alert_and_followup_state():
+    seeded = _generate_entities()
+    snapshots = seeded[TABLE_SNAPSHOTS]
+    high = next(row for row in snapshots if row["RiskLevel"] == "Alto")
+    student_id = high["StudentId"]
+    reviewed_alert = {
+        "PartitionKey": "alerts",
+        "RowKey": f"risk-{student_id}",
+        "Status": "resolved",
+        "Source": "synthetic-risk-rule",
+    }
+    reviewed_followup = {
+        "PartitionKey": "followups",
+        "RowKey": f"seed-{student_id}",
+        "Status": "closed",
+    }
+    tables = {
+        TABLE_STUDENTS: _FakeTable(seeded[TABLE_STUDENTS]),
+        TABLE_SNAPSHOTS: _FakeTable(snapshots),
+        TABLE_ALERTS: _FakeTable([reviewed_alert]),
+        TABLE_FOLLOWUPS: _FakeTable([reviewed_followup]),
+        TABLE_TRENDS: _FakeTable(),
+        TABLE_CONTROL: _FakeTable(
+            [{"PartitionKey": "control", "RowKey": "poc", "OperationalSeedVersion": 1}]
+        ),
+    }
+
+    asyncio.run(_ensure_operational_data(tables))
+
+    assert tables[TABLE_ALERTS].rows[("alerts", f"risk-{student_id}")]["Status"] == "resolved"
+    assert tables[TABLE_FOLLOWUPS].rows[("followups", f"seed-{student_id}")]["Status"] == "closed"
+    assert len(tables[TABLE_ALERTS].rows) > 1
+    assert len(tables[TABLE_TRENDS].rows) == 12
+
+    control = tables[TABLE_CONTROL].rows[("control", "poc")]
+    assert control["OperationalStudentCount"] == len(snapshots)
+    alerts_before = len(tables[TABLE_ALERTS].rows)
+    asyncio.run(_ensure_operational_data(tables))
+    assert len(tables[TABLE_ALERTS].rows) == alerts_before
+
+
 def test_synthetic_catalog_matches_university_mockup():
     assert {name for _, name, _ in _PROGRAMS} == {
         "Fisioterapia",
         "Fonoaudiología",
+        "Terapia Ocupacional",
+        "Nutrición y Dietética",
+        "Actividad Física y Deporte",
         "Administración de Empresas",
         "Contaduría Pública",
+        "Administración en Salud (Virtual)",
         "Ingeniería de Software",
-        "Tecnología en Electromedicina",
         "Psicología",
     }
-    assert set(_CITIES) == {"Medellín", "Cali", "Neiva", "Popayán"}
+    assert len(_PROGRAMS) == 10
+    assert set(_CITIES) == {"Medellín", "Cali", "Neiva", "Popayán", "Nacional"}
     assert set(_FACULTY_BY_PROGRAM.values()) == {
         "Ciencias de la Salud",
         "Ciencias Empresariales",
@@ -454,6 +542,251 @@ def test_get_synthetic_student_degrades_gracefully_if_finance_and_wellbeing_rows
     assert result["finance"]["arrears_months"] == 0
     assert result["wellbeing"]["support_type"] is None
     assert result["wellbeing"]["sessions"] == 0
+
+
+def test_pending_synthetic_cases_are_selected_by_highest_score(monkeypatch):
+    class AsyncRows:
+        def __init__(self, rows):
+            self.rows = iter(rows)
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            try:
+                return next(self.rows)
+            except StopIteration:
+                raise StopAsyncIteration
+
+    class SnapshotTable:
+        def query_entities(self, query_filter):
+            assert "Status eq 'pending'" in query_filter
+            return AsyncRows(
+                [
+                    {"RowKey": "student-3", "ModelProbability": 0.3},
+                    {"RowKey": "student-2", "ModelProbability": 0.9},
+                    {"RowKey": "student-1", "ModelProbability": 0.9},
+                    {"RowKey": "student-4", "ModelProbability": 0.1},
+                ]
+            )
+
+    class TableContext:
+        async def __aenter__(self):
+            return {TABLE_SNAPSHOTS: SnapshotTable()}
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+    monkeypatch.setattr(
+        synthetic_database_module, "ensure_synthetic_database", lambda: None
+    )
+    monkeypatch.setattr(
+        synthetic_database_module, "_table_clients", lambda: TableContext()
+    )
+
+    async def load_case(tables, row):
+        return {"case_id": row["RowKey"], "score": row["ModelProbability"]}
+
+    monkeypatch.setattr(synthetic_database_module, "_load_case", load_case)
+    result = asyncio.run(synthetic_database_module.get_pending_synthetic_cases(3))
+
+    assert [case["case_id"] for case in result] == [
+        "student-1",
+        "student-2",
+        "student-3",
+    ]
+
+
+def test_pending_selection_takes_top_50_by_score_excluding_reserved_and_analyzed(monkeypatch):
+    from sat_agents import synthetic_database as db
+
+    rows = [
+        {"RowKey": f"s-{i:03d}", "ModelProbability": i / 200, "Status": "pending"}
+        for i in range(120)
+    ]
+    rows[119]["Status"] = "processing"
+    rows[118]["Status"] = "processed"
+
+    class Rows:
+        def __init__(self, items):
+            self.items = list(items)
+
+        def __aiter__(self):
+            async def gen():
+                for item in self.items:
+                    yield item
+
+            return gen()
+
+    class SnapshotTable:
+        def query_entities(self, query_filter):
+            assert "Status eq 'pending'" in query_filter
+            return Rows(row for row in rows if row["Status"] == "pending")
+
+    class Tables:
+        async def __aenter__(self):
+            return {db.TABLE_SNAPSHOTS: SnapshotTable()}
+
+        async def __aexit__(self, *exc):
+            return False
+
+    async def load_case(tables, row):
+        return {"case_id": row["RowKey"], "score": row["ModelProbability"]}
+
+    monkeypatch.setattr(db, "ensure_synthetic_database", lambda: None)
+    monkeypatch.setattr(db, "_table_clients", lambda: Tables())
+    monkeypatch.setattr(db, "_load_case", load_case)
+
+    selected = asyncio.run(db.get_pending_synthetic_cases(db.MAX_BATCH_SIZE))
+
+    assert db.MAX_BATCH_SIZE == 20
+    assert len(selected) == 20
+    scores = [case["score"] for case in selected]
+    assert scores == sorted(scores, reverse=True)
+    assert selected[0]["case_id"] == "s-117"
+    assert {"s-118", "s-119"}.isdisjoint(case["case_id"] for case in selected)
+
+
+class _FakeTask:
+    def __init__(self, fails=False):
+        self.is_faulted = fails
+
+
+class _FakeOrchestrationContext:
+    def __init__(self, batch, failing=()):
+        self._batch = batch
+        self.failing = set(failing)
+        self.started = []
+        self.activities = []
+        self.status = []
+        self.tasks = {}
+
+    def get_input(self):
+        return self._batch
+
+    def set_custom_status(self, value):
+        self.status.append(dict(value))
+
+    def call_sub_orchestrator(self, name, payload, instance_id):
+        task = _FakeTask(fails=instance_id in self.failing)
+        self.started.append(instance_id)
+        self.tasks[id(task)] = instance_id
+        return task
+
+    def task_any(self, tasks):
+        return ("any", list(tasks))
+
+    def call_activity(self, name, payload):
+        self.activities.append((name, payload))
+        return ("activity", name)
+
+
+def _drive_batch_orchestrator(context):
+    import function_app
+
+    handle = function_app.batch_orchestrator._function.get_user_function()
+    orchestrator = handle.__closure__[handle.__code__.co_freevars.index("fn")].cell_contents
+    generator = orchestrator(context)
+    value = None
+    try:
+        step = next(generator)
+        while True:
+            if isinstance(step, tuple) and step[0] == "any":
+                value = step[1][0]
+            else:
+                value = None
+            step = generator.send(value)
+    except StopIteration as stop:
+        return stop.value
+
+
+def test_batch_orchestrator_fans_out_all_cases_before_waiting_and_isolates_failures():
+    cases = [
+        {
+            "case_id": f"syn-c-{i}",
+            "review_id": f"batch-{i:03d}",
+            "case": {**_case_payload(), "model_probability": 0.9 - i / 100},
+        }
+        for i in range(5)
+    ]
+    context = _FakeOrchestrationContext(
+        {"batch_id": "batch", "cases": cases}, failing={"batch-002"}
+    )
+
+    result = _drive_batch_orchestrator(context)
+
+    assert context.started == [f"batch-{i:03d}" for i in range(5)]
+    assert result["processed_count"] == 4
+    assert result["failed_count"] == 1
+    assert result["status"] == "completed_with_errors"
+    assert context.status[0]["total"] == 5
+    assert context.status[-1]["done"] == 5
+    assert context.status[-1]["max_probability"] > context.status[-1]["min_probability"]
+    pending_resets = [
+        payload["case_id"]
+        for name, payload in context.activities
+        if name == "update_synthetic_case_status" and payload["status"] == "pending"
+    ]
+    assert pending_resets == ["syn-c-2"]
+
+
+def test_auto_analysis_runs_once_and_can_be_disabled(monkeypatch):
+    import function_app
+
+    monkeypatch.setenv("DATA_MODE", "synthetic")
+    monkeypatch.setattr(
+        function_app, "_authorize_reviewer", lambda request: ("reviewer", None)
+    )
+
+    async def enabled():
+        return True
+
+    monkeypatch.setattr(function_app, "get_poc_enabled", enabled)
+    claims = {"result": True, "calls": 0}
+
+    async def claim_auto():
+        claims["calls"] += 1
+        return claims["result"]
+
+    requested = {}
+
+    async def get_pending(limit):
+        requested["limit"] = limit
+        return [{**_case_payload(), "case_id": "syn-auto-001"}]
+
+    async def reserve(batch_id, evaluation_count=1):
+        return None
+
+    async def claim(case_ids, batch_id):
+        return None
+
+    monkeypatch.setattr(function_app, "claim_auto_analysis", claim_auto)
+    monkeypatch.setattr(function_app, "get_pending_synthetic_cases", get_pending)
+    monkeypatch.setattr(function_app, "reserve_evaluation_slot", reserve)
+    monkeypatch.setattr(function_app, "claim_synthetic_cases", claim)
+
+    class DurableClient:
+        async def start_new(self, name, *, instance_id, client_input):
+            return None
+
+    payload = {"auto": True}
+    body = json.dumps(payload).encode()
+    request = SimpleNamespace(headers={}, get_body=lambda: body, get_json=lambda: payload)
+
+    def call():
+        return asyncio.run(function_app._start_synthetic_batch(request, DurableClient()))
+
+    monkeypatch.delenv("AUTO_ANALYZE_TOP_N", raising=False)
+    assert call().status_code == 202
+    assert requested["limit"] == 20
+
+    claims["result"] = False
+    assert call().status_code == 409
+
+    monkeypatch.setenv("AUTO_ANALYZE_TOP_N", "0")
+    calls_before = claims["calls"]
+    assert call().status_code == 409
+    assert claims["calls"] == calls_before
 
 
 def test_public_review_projection_omits_case_id_and_raw_source_text():
@@ -600,7 +933,7 @@ def test_review_export_api_blocks_requests_without_reviewer_auth(monkeypatch):
 @pytest.mark.parametrize(
     ("model", "expected_api", "expected_max_tokens", "expected_completion", "temperature"),
     [
-        ("gpt-5-mini", "2025-04-01-preview", None, 512, None),
+        ("gpt-5-mini", "2025-04-01-preview", None, 2048, None),
         ("gpt-4o-mini", "2024-10-21", 512, None, 0.1),
     ],
 )
@@ -647,6 +980,8 @@ def test_chat_settings_use_gpt5_safe_or_legacy_parameters(
     assert settings.max_tokens == expected_max_tokens
     assert settings.max_completion_tokens == expected_completion
     assert settings.temperature == temperature
+    # Los modelos de razonamiento llevan esfuerzo acotado; los clásicos no lo reciben.
+    assert settings.reasoning_effort == ("low" if expected_completion else None)
     assert result == (
         '{"ok":true}',
         {"input_tokens": 12, "output_tokens": 4, "total_tokens": 16},
@@ -856,12 +1191,12 @@ def test_synthetic_batch_api_reserves_and_starts_only_requested_records(monkeypa
 
     cases = [
         {**_case_payload(), "case_id": f"syn-batch-{index:03d}"}
-        for index in range(1, 3)
+        for index in range(1, 21)
     ]
     monkeypatch.setattr(function_app, "get_poc_enabled", enabled)
 
     async def get_pending(limit):
-        assert limit == 2
+        assert limit == 20
         return cases
 
     reservations = []
@@ -885,11 +1220,11 @@ def test_synthetic_batch_api_reserves_and_starts_only_requested_records(monkeypa
             self.client_input = client_input
 
     durable_client = DurableClient()
-    body = json.dumps({"limit": 2}).encode()
+    body = json.dumps({"limit": 20}).encode()
     request = SimpleNamespace(
         headers={},
         get_body=lambda: body,
-        get_json=lambda: {"limit": 2},
+        get_json=lambda: {"limit": 20},
     )
 
     response = asyncio.run(
@@ -898,11 +1233,69 @@ def test_synthetic_batch_api_reserves_and_starts_only_requested_records(monkeypa
 
     assert response.status_code == 202
     result = json.loads(response.get_body())
-    assert result["selected"] == 2
+    assert result["selected"] == 20
     assert durable_client.name == "batch_orchestrator"
-    assert len(durable_client.client_input["cases"]) == 2
-    assert reservations == [(result["batchId"], 2)]
+    assert len(durable_client.client_input["cases"]) == 20
+    assert reservations == [(result["batchId"], 20)]
     assert claims == [([case["case_id"] for case in cases], result["batchId"])]
+
+
+def _run_single_student_batch(monkeypatch, loader):
+    import function_app
+
+    monkeypatch.setenv("DATA_MODE", "synthetic")
+    monkeypatch.setattr(
+        function_app, "_authorize_reviewer", lambda request: ("reviewer", None)
+    )
+
+    async def enabled():
+        return True
+
+    async def reserve(batch_id, evaluation_count=1):
+        reserve.count = evaluation_count
+
+    async def claim(case_ids, batch_id):
+        claim.ids = case_ids
+
+    monkeypatch.setattr(function_app, "get_poc_enabled", enabled)
+    monkeypatch.setattr(function_app, "get_synthetic_case_for_student", loader)
+    monkeypatch.setattr(function_app, "reserve_evaluation_slot", reserve)
+    monkeypatch.setattr(function_app, "claim_synthetic_cases", claim)
+
+    class DurableClient:
+        async def start_new(self, name, *, instance_id, client_input):
+            self.client_input = client_input
+
+    durable_client = DurableClient()
+    payload = {"student_id": "ST-SYN-000007"}
+    body = json.dumps(payload).encode()
+    request = SimpleNamespace(headers={}, get_body=lambda: body, get_json=lambda: payload)
+    response = asyncio.run(function_app._start_synthetic_batch(request, durable_client))
+    return response, durable_client, reserve, claim
+
+
+def test_batch_api_can_analyze_one_requested_student(monkeypatch):
+    async def loader(student_id):
+        assert student_id == "ST-SYN-000007"
+        return {**_case_payload(), "case_id": "syn-st-syn-000007"}
+
+    response, durable_client, reserve, claim = _run_single_student_batch(monkeypatch, loader)
+
+    assert response.status_code == 202
+    assert json.loads(response.get_body())["selected"] == 1
+    assert reserve.count == 1
+    assert claim.ids == ["syn-st-syn-000007"]
+    assert len(durable_client.client_input["cases"]) == 1
+
+
+def test_batch_api_rejects_student_that_cannot_be_reprocessed(monkeypatch):
+    async def loader(student_id):
+        raise ValueError("El estudiante ya fue analizado.")
+
+    response, *_ = _run_single_student_batch(monkeypatch, loader)
+
+    assert response.status_code == 400
+    assert b"ya fue analizado" in response.get_body()
 
 
 def test_poc_pause_refuses_to_interrupt_active_batch(monkeypatch):
@@ -1037,7 +1430,7 @@ def test_static_ui_serves_allowlisted_files_only():
     )
 
     assert page.status_code == 200
-    assert b"Dashboard ejecutivo" in page.get_body()
+    assert "Permanencia estudiantil".encode() in page.get_body()
     assert b'dashboard.js' in page.get_body()
     assert page.headers["Content-Security-Policy"].startswith("default-src 'self'")
     assert script.status_code == 200
@@ -1050,3 +1443,161 @@ def test_static_ui_serves_allowlisted_files_only():
     assert b'risk-heatmap' in page.get_body()
     assert legacy_script.status_code == 404
     assert traversal.status_code == 404
+
+
+def test_operational_seed_growth_only_creates_alerts_for_new_students():
+    seeded = _generate_entities(400)
+    snapshots = seeded[TABLE_SNAPSHOTS]
+    tables = {
+        TABLE_STUDENTS: _FakeTable(seeded[TABLE_STUDENTS]),
+        TABLE_SNAPSHOTS: _FakeTable(snapshots),
+        TABLE_ALERTS: _FakeTable(),
+        TABLE_FOLLOWUPS: _FakeTable(),
+        TABLE_TRENDS: _FakeTable(),
+        TABLE_CONTROL: _FakeTable(
+            [{"PartitionKey": "control", "RowKey": "poc", "StudentCount": 200}]
+        ),
+    }
+    asyncio.run(_ensure_operational_data(tables))
+    first_run = set(tables[TABLE_ALERTS].rows)
+    assert first_run
+    first_alert = next(iter(first_run))
+    tables[TABLE_ALERTS].rows[first_alert]["Status"] = "resolved"
+
+    tables[TABLE_CONTROL].rows[("control", "poc")]["StudentCount"] = 400
+    asyncio.run(_ensure_operational_data(tables))
+
+    assert tables[TABLE_ALERTS].rows[first_alert]["Status"] == "resolved"
+    control = tables[TABLE_CONTROL].rows[("control", "poc")]
+    assert control["OperationalStudentCount"] == 400
+
+
+def _training_row(training_id, program="FIS", campus="VIR", mora=0.0):
+    return {
+        "id_estudiante_anon": training_id, "periodo_id": "2025-2",
+        "programa": program, "sede": campus, "modalidad": "Virtual",
+        "semestres_cursados": 10, "estrato_socioeconomico": 2, "jefe_hogar": 1,
+        "monto_matricula": 3_000_000.0, "saldo_mora": mora,
+        "tipo_financiacion": "ICETEX", "tiene_beca": 0,
+        "promedio_semestre": float("nan"),
+    }
+
+
+def test_training_cohort_maps_training_rows_to_operational_entities():
+    from sat_agents.training_cohort import build_cohort_entities
+
+    entities = build_cohort_entities(
+        snapshot_rows=[_training_row("ST-000010", mora=1_000_000.0), _training_row("ST-000011")],
+        probabilities={"ST-000010": 0.72, "ST-000011": 0.12},
+        course_rows=[
+            {"id_estudiante_anon": "ST-000010", "asignatura_id": "FIS-A001", "nota_primer_corte": 4.0, "asistencia_pct": 90.0, "cancelada": 0},
+            {"id_estudiante_anon": "ST-000010", "asignatura_id": "FIS-A002", "nota_primer_corte": 2.0, "asistencia_pct": 55.0, "cancelada": 0},
+            {"id_estudiante_anon": "ST-000010", "asignatura_id": "FIS-A003", "nota_primer_corte": 1.0, "asistencia_pct": 10.0, "cancelada": 1},
+        ],
+        wellbeing_rows=[{"id_estudiante_anon": "ST-000010", "tipo_apoyo": "Tutoria", "num_sesiones": 2, "canal": "Virtual", "asistio": 1}],
+        target_rows=[{"id_estudiante_anon": "ST-000010", "target_desercion": 1}],
+        program_names={"FIS": "Fisioterapia"},
+        campus_names={"VIR": "Virtual"},
+        first_number=5001,
+        model_name="SAT_TEST_MODEL",
+        model_version="7",
+        scored_at="2026-11-10T00:00:00+00:00",
+        feature_columns=["promedio_semestre", "saldo_mora"],
+    )
+
+    student = entities[TABLE_STUDENTS][0]
+    assert student["RowKey"] == "ST-SYN-005001"
+    assert student["Semester"] == 9 and student["City"] == "Nacional"
+    assert student["FamilyContext"] == "has_dependents"
+    snapshot = entities[TABLE_SNAPSHOTS][0]
+    assert snapshot["ModelProbability"] == 0.72 and snapshot["RiskLevel"] == "Alto"
+    assert "TargetDesercion" not in snapshot and (snapshot["ModelName"], snapshot["ModelVersion"], snapshot["ScoredAt"]) == ("SAT_TEST_MODEL", "7", "2026-11-10T00:00:00+00:00")
+    assert json.loads(snapshot["FeaturesJson"]) == {"promedio_semestre": None, "saldo_mora": 1_000_000.0}
+    assert entities[TABLE_FINANCE][0]["ArrearsMonths"] == 2
+    assert entities[TABLE_FINANCE][1]["ArrearsMonths"] == 0
+    assert entities[TABLE_WELLBEING][0]["Attended"] is True
+    assert entities[TABLE_WELLBEING][1]["Channel"] == "Sin registro"
+    assert [row["CourseCode"] for row in entities[TABLE_ACADEMICS]] == ["FIS-A002", "FIS-A001"]
+    assert [row["TargetDesercion"] for row in entities[TABLE_TARGETS]] == [1]
+    assert entities[TABLE_STUDENTS][1]["RowKey"] == "ST-SYN-005002"
+
+
+def test_followup_summary_feeds_student_list_columns():
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "azure" / "agent_platform"))
+    from sat_agents.synthetic_database import _followup_summary
+
+    assert _followup_summary([], "processed", "Bajo") == ("Sin seguimiento", "Sin intervención")
+    assert _followup_summary([], "processed", "Medio")[0] == "Monitoreo"
+    active = [{"Status": "open", "Owner": "", "DueDate": "9999-01-01"}]
+    assert _followup_summary(active, "processed", "Alto")[0] == "Sin responsable"
+    overdue = [{"Status": "open", "Owner": "X", "DueDate": "2000-01-01"}]
+    assert _followup_summary(overdue, "processed", "Alto")[0] == "Seguimiento vencido"
+    done = [{"Status": "completed", "UpdatedAt": "2026-11-02T10:00:00+00:00"}]
+    assert _followup_summary(done, "processed", "Bajo")[1] == "02/11/2026"
+
+
+def test_agent_response_text_supports_semantic_kernel_message_content():
+    from types import SimpleNamespace
+
+    from sat_agents.agents import _response_text
+
+    # Semantic Kernel reciente: response.content es un ChatMessageContent y el texto está en message.content.
+    modern = SimpleNamespace(
+        content=SimpleNamespace(content="texto nuevo"),
+        message=SimpleNamespace(content="texto nuevo"),
+    )
+    assert _response_text(modern) == "texto nuevo"
+    # Versiones anteriores: content ya es str.
+    legacy = SimpleNamespace(content="texto viejo")
+    assert _response_text(legacy) == "texto viejo"
+    assert _response_text(SimpleNamespace(content="")) == ""
+
+
+def test_sanitize_analysis_text_trims_long_text_and_drops_foreign_fields():
+    from sat_agents.contracts import parse_analysis_response, sanitize_analysis_text
+
+    long_text = "palabra " * 120
+    raw = json.dumps(
+        {
+            "summary": "Resumen",
+            "observations": [long_text, "  ", "corta"],
+            "limitations": ["ok"],
+            "citation_ids": [],
+            "recommendation_draft": "no debe pasar",
+        }
+    )
+
+    parsed = parse_analysis_response(sanitize_analysis_text(raw))
+
+    assert set(parsed) == {"summary", "observations", "limitations", "citation_ids"}
+    assert len(parsed["observations"]) == 2
+    assert len(parsed["observations"][0]) <= 500 and parsed["observations"][0].endswith("…")
+    # Sin saneamiento, el contrato estricto sigue rechazando los campos ajenos.
+    with pytest.raises(ContractError):
+        parse_analysis_response(raw)
+
+
+def test_sanitize_recommendation_maps_free_text_actions_to_allowed_codes():
+    from sat_agents.contracts import parse_recommendation_response, sanitize_recommendation_text
+
+    raw = json.dumps(
+        {
+            "summary": "Resumen",
+            "proposed_actions": [
+                "Tutoría en matemáticas",
+                {"action": "financial_aid_review", "rationale": "mora"},
+                "Llamar a la familia",
+                "tutoring_review",
+            ],
+            "limitations": "Datos de un solo corte",
+            "notes": "campo ajeno",
+        }
+    )
+
+    parsed = parse_recommendation_response(sanitize_recommendation_text(raw))
+
+    assert parsed["proposed_actions"] == ["tutoring_review", "financial_aid_review"]
+    assert parsed["limitations"] == ["Datos de un solo corte"]
+    with pytest.raises(ContractError):
+        parse_recommendation_response(raw)

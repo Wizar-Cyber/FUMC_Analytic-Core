@@ -64,6 +64,9 @@ OUTCOME_FOLLOWUP_PERIODS = int(
     CONFIG.get("outcome_followup_periods", TARGET_HORIZON_PERIODS)
 )
 INTERVENTION_CONFIG = CONFIG.get("intervention_effectiveness", {})
+FOLLOWUP_ALIGNMENT = str(CONFIG.get("followup_alignment", "aligned"))
+if FOLLOWUP_ALIGNMENT not in ("aligned", "legacy"):
+    raise ValueError("followup_alignment debe ser 'aligned' o 'legacy'.")
 
 if (
     N_ESTUDIANTES < 1
@@ -749,22 +752,36 @@ for idx, est in est_df.iterrows():
     # follow-up draws affect labels only and are never emitted as predictors.
     if outcome_period_index is None and last_hazard_probability is not None:
         last_snapshot_index = len(PERIODOS) - 1
-        for future_offset in range(1, OUTCOME_FOLLOWUP_PERIODS + 1):
+        # A dropout draw at snapshot q produces an outcome at period q+1. The
+        # "aligned" mode therefore simulates virtual snapshots after the last
+        # observed one and places each event one period later, so every label
+        # window contains the same number of independent hazard draws. The
+        # "legacy" mode (generator <= 2.0.0) drew the first follow-up event at
+        # last+1, duplicating the last snapshot's own draw and inflating the
+        # label prevalence of the final periods.
+        if FOLLOWUP_ALIGNMENT == "aligned":
+            followup_offsets = range(1, OUTCOME_FOLLOWUP_PERIODS)
+            outcome_shift = 1
+        else:
+            followup_offsets = range(1, OUTCOME_FOLLOWUP_PERIODS + 1)
+            outcome_shift = 0
+        for future_offset in followup_offsets:
             future_hazard = _clamp(
                 last_hazard_probability * (0.92 ** (future_offset - 1)),
                 0.01,
                 0.95,
             )
+            event_index = last_snapshot_index + future_offset + outcome_shift
             if RNG.random() < future_hazard:
-                outcome_period_index = last_snapshot_index + future_offset
+                outcome_period_index = event_index
                 outcome_type = "dropout"
                 break
             if RNG.random() < 0.006:
-                outcome_period_index = last_snapshot_index + future_offset
+                outcome_period_index = event_index
                 outcome_type = "transfer"
                 break
             if RNG.random() < 0.008:
-                outcome_period_index = last_snapshot_index + future_offset
+                outcome_period_index = event_index
                 outcome_type = "formal_leave"
                 break
 
@@ -1019,6 +1036,7 @@ effective_config = {
         "horizon_periods": TARGET_HORIZON_PERIODS,
     },
         "outcome_followup_periods": OUTCOME_FOLLOWUP_PERIODS,
+    "followup_alignment": FOLLOWUP_ALIGNMENT,
 }
 effective_config_text = json.dumps(
     effective_config, sort_keys=True, ensure_ascii=False, separators=(",", ":")
